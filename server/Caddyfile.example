@@ -1,0 +1,37 @@
+# Caddyfile — automatic HTTPS for the ntfy + broker stack (Icinga rich notifications).
+#
+# Caddy obtains and renews a Let's Encrypt certificate automatically for the domain below.
+# Requirements: ports 80 + 443 reachable from the internet, and the domain's DNS A/AAAA record
+# pointing at this host.
+#
+# Use it as part of the stack:
+#     cp Caddyfile.example Caddyfile      # then change push.example.com to your domain
+#     docker compose --profile caddy up -d
+# The `caddy` service in docker-compose.yml mounts ./Caddyfile and reaches the other services
+# over the compose network (hence the `ntfy:80` / `broker:8080` upstreams below).
+#
+# No public IP / can't forward ports? You don't need Caddy at all — front the stack with a
+# tunnel (Cloudflare Tunnel or Tailscale Funnel), which provides TLS and needs no inbound ports.
+# See docs/reachability.md.
+
+# Optional global options — uncomment to set the ACME contact e-mail.
+# {
+#     email you@example.com
+# }
+
+push.example.com {
+	# Ack / Downtime callbacks + graph PNGs -> broker. handle_path strips the /broker prefix so
+	# the broker sees /ack, /downtime, /graph/...
+	handle_path /broker/* {
+		reverse_proxy broker:8080
+	}
+
+	# Everything else -> ntfy (subscribe stream, publish, web app). Caddy proxies SSE and
+	# WebSocket transparently — no buffering tweaks needed.
+	reverse_proxy ntfy:80
+}
+
+# Running Caddy standalone (not as the compose service)? Use the published host ports instead of
+# the compose service names:
+#     handle_path /broker/* { reverse_proxy 127.0.0.1:8081 }
+#     reverse_proxy 127.0.0.1:8080

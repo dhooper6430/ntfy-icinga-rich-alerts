@@ -54,14 +54,17 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
         └───────────────────────────────┘                                └──────────┘
 
   graph data source (pick one): Grafana render API  OR  VictoriaMetrics query API
-  TLS for ntfy + broker is terminated by your own reverse proxy (nginx.example.conf).
+  TLS for ntfy + broker is terminated by Caddy (server/Caddyfile.example) or a tunnel.
 ```
 
 - **dispatcher** (`dispatcher/`) — Python, runs *on the Icinga master*, invoked by Icinga as a
   `NotificationCommand`. Applies suppression, renders the graph, publishes the ntfy message.
 - **server stack** (`server/`) — Docker Compose: the **ntfy** server plus the **broker** (a small
   Flask app serving graph PNGs and handling Ack/Downtime callbacks).
-- Your **reverse proxy** terminates TLS and fronts both (an example nginx vhost is included).
+- **Caddy** (opt-in `caddy` service) terminates TLS and fronts both, fetching a Let's Encrypt
+  certificate automatically — see `server/Caddyfile.example`. Behind CGNAT or without a static IP,
+  front the stack with a **tunnel** (Cloudflare Tunnel or Tailscale Funnel) instead; see
+  [`docs/reachability.md`](docs/reachability.md).
 
 ## Quick start
 
@@ -72,7 +75,10 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
    cp server.example.yml server.yml   # set base-url to your domain
    docker compose up -d --build
    ```
-   Put your reverse proxy in front of it for TLS — see `server/nginx.example.conf`.
+   Put Caddy in front for TLS — copy `server/Caddyfile.example` to `Caddyfile`, set your domain,
+   and run `docker compose --profile caddy up -d`; Caddy provisions a Let's Encrypt certificate
+   automatically. No static IP / behind CGNAT? Use a tunnel instead — see
+   [`docs/reachability.md`](docs/reachability.md).
 
 2. **Create the ntfy users/topic.** Add a publisher token (read-write on the topic) for the
    dispatcher, and a read-only login per person:
@@ -143,8 +149,10 @@ store is unreachable the alert is sent anyway.
 - **You own the data.** Alerts, acknowledgements, and the graph all stay on infrastructure you
   control. The only optional third party is the public ntfy.sh APNs relay used for iOS instant
   push, and it only ever receives a SHA-256 wake-up of the topic name — never your message.
-- **Bring your own TLS.** Neither ntfy nor the broker terminate TLS; put them behind your own
-  reverse proxy (example nginx vhost included) with a certificate from any ACME client.
+- **TLS at the edge.** Neither ntfy nor the broker terminate TLS; put them behind the opt-in
+  **Caddy** service (`server/Caddyfile.example`), which provisions a Let's Encrypt certificate
+  automatically, or behind a **tunnel** (Cloudflare Tunnel / Tailscale Funnel) that supplies TLS —
+  see [`docs/reachability.md`](docs/reachability.md).
 - **Action buttons are HMAC-signed.** Each Ack/Downtime button carries a short HMAC token over
   `action:host:service`, verified by the broker before it calls Icinga. The Icinga API itself is
   reached through a **scoped** ApiUser limited to `acknowledge-problem` + `schedule-downtime`, so

@@ -9,7 +9,7 @@ How the pieces fit together, and why.
 | **dispatcher** (`dispatcher/notify.py`) | on the Icinga master | Invoked by Icinga as a `NotificationCommand`. Reads the alert from environment macros, applies suppression, renders a graph, and publishes a rich ntfy message. |
 | **ntfy server** (`server/` stack) | a Docker host | Self-hosted push server. Holds users/ACLs, relays push to subscribed phones, optionally piggybacks ntfy.sh for iOS APNs. |
 | **broker** (`server/broker/app.py`) | a Docker host (same stack) | Small Flask app. Serves the graph PNGs the dispatcher pushes, and handles the Acknowledge / Downtime button callbacks by calling the Icinga API. |
-| **reverse proxy** (`server/nginx.example.conf`) | your edge | Terminates TLS; routes `/` → ntfy and `/broker/` → broker. |
+| **Caddy** (`server/Caddyfile.example`) *or a tunnel* | your edge | Terminates TLS (auto Let's Encrypt) and routes `/` → ntfy and `/broker/` → broker. Opt-in `caddy` service, or front the stack with a tunnel — see [`reachability.md`](reachability.md). |
 | **graph data source** | existing | Either Grafana (render API) or VictoriaMetrics / Prometheus (query API) holding Icinga perfdata. |
 
 ## End-to-end flow

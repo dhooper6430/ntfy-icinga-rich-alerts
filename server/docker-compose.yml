@@ -1,10 +1,14 @@
 # Self-hosted ntfy push server + action broker for Icinga rich notifications.
 #
-# TLS is expected to be terminated UPSTREAM by your own reverse proxy (see nginx.example.conf),
-# which should proxy:
-#   /        -> ntfy   (this stack, plain HTTP on port 80 inside the network)
-#   /broker/ -> broker (this stack, plain HTTP on port 8080 inside the network)
-# so neither service terminates TLS itself.
+# TLS is terminated by a reverse proxy in front of the two plain-HTTP services below:
+#   /        -> ntfy   (port 80 inside the network)
+#   /broker/ -> broker (port 8080 inside the network)
+#
+# Two easy ways to get TLS:
+#   * Caddy (included) — `docker compose --profile caddy up -d` after copying Caddyfile.example
+#     to Caddyfile and setting your domain. Caddy gets a Let's Encrypt cert automatically.
+#   * A tunnel (Cloudflare Tunnel / Tailscale Funnel) — no Caddy, no static IP, no open ports.
+#     Point the tunnel at the published ntfy/broker ports. See docs/reachability.md.
 #
 # The dispatcher (which Icinga invokes, on your Icinga master) lives in ../dispatcher/. It
 # publishes to ntfy and signs broker callbacks with BROKER_SHARED_SECRET (set in .env here and
@@ -23,7 +27,8 @@ services:
       - ./server.yml:/etc/ntfy/server.yml:ro
       - ${NTFY_DATA_PATH:-./data}/lib:/var/lib/ntfy
     ports:
-      # Exposed for your upstream reverse proxy. Bind to localhost if the proxy is on the same host.
+      # Published for an upstream reverse proxy / tunnel. Bound to localhost by default; the
+      # in-compose Caddy service reaches ntfy over the network instead and ignores this.
       - "${NTFY_BIND:-127.0.0.1}:8080:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:80/v1/health | grep -q healthy"]
@@ -62,6 +67,29 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # Optional automatic-HTTPS reverse proxy. Opt-in: `docker compose --profile caddy up -d`.
+  # Skip it entirely if you front the stack with a tunnel (see docs/reachability.md).
+  caddy:
+    image: caddy:2-alpine
+    container_name: ntfy-caddy
+    restart: unless-stopped
+    profiles: ["caddy"]
+    depends_on:
+      - ntfy
+      - broker
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"          # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro      # cp Caddyfile.example Caddyfile, set your domain
+      - ${NTFY_DATA_PATH:-./data}/caddy:/data    # certificates + ACME state (persist this!)
     logging:
       driver: json-file
       options:

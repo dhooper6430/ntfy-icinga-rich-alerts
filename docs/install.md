@@ -10,8 +10,9 @@ domain, and pick secrets with `openssl rand -hex 32`.
   ```bash
   icinga2 feature enable api && systemctl restart icinga2
   ```
-- A **Docker** host for the server stack, and a **reverse proxy** (nginx in the examples) that can
-  terminate TLS for a public hostname such as `push.example.com`.
+- A **Docker** host for the server stack, with TLS for a public hostname such as
+  `push.example.com` terminated by the bundled **Caddy** service (`server/Caddyfile.example`) or by
+  a **tunnel** (Cloudflare Tunnel / Tailscale Funnel) — see [`reachability.md`](reachability.md).
 - A graph data source — either a **Grafana** instance with a parametric panel, or a
   **VictoriaMetrics** / Prometheus-compatible API holding your Icinga performance data.
 
@@ -39,9 +40,11 @@ docker compose up -d --build
 ```
 
 By default the stack publishes ntfy on `127.0.0.1:8080` and the broker on `127.0.0.1:8081` (set
-`NTFY_BIND` / `BROKER_BIND` in `.env` to change). Put your reverse proxy in front — copy
-`server/nginx.example.conf` to your nginx `sites-enabled/`, drop in a TLS certificate, and reload
-nginx. The proxy maps `/` → ntfy and `/broker/` → broker.
+`NTFY_BIND` / `BROKER_BIND` in `.env` to change). Put **Caddy** in front for TLS — copy
+`server/Caddyfile.example` to `Caddyfile`, set your domain, and bring up the opt-in service with
+`docker compose --profile caddy up -d`. Caddy provisions a Let's Encrypt certificate automatically
+(no manual cert step) and maps `/` → ntfy and `/broker/` → broker. If this host has no static IP or
+sits behind CGNAT, front it with a tunnel instead — see [`reachability.md`](reachability.md).
 
 ### Create ntfy users and a topic
 
