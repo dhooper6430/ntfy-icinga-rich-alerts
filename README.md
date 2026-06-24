@@ -4,6 +4,12 @@ Rich, self-hosted push notifications for [Icinga 2](https://icinga.com/) via
 [ntfy](https://ntfy.sh/) — with a lock-screen performance graph, **Acknowledge / Downtime**
 action buttons, and HA-safe deduplication. No SaaS, no per-seat pricing, you own the data.
 
+<p align="center">
+  <img src="docs/ntfy_rich_notification_screenshot.jpeg" width="460"
+       alt="An ntfy rich notification on a phone: state, check output, host, and an inline perfdata graph">
+  <br><em>A notification on the lock screen — state, check output, host, and an inline perfdata graph.</em>
+</p>
+
 ## Why
 
 Most "real" alerting that reaches a phone routes through a third-party SaaS. This project gives
