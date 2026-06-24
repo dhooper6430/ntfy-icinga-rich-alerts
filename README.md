@@ -102,7 +102,9 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
 
 4. **Wire the NotificationCommand + apply rule** (and the scoped `ntfy-broker` ApiUser) — see
    `dispatcher/icinga2/ntfy-notifications.conf.example`, or create the equivalents in Icinga
-   Director.
+   Director. *(No public IP / behind CGNAT? Switch `actions.transport` to `relay` and use the
+   `ntfy-relay` ApiUser instead — the buttons then ride ntfy with nothing exposed; see
+   [`docs/reachability.md`](docs/reachability.md).)*
 
 5. **Subscribe a phone:** point the ntfy app at `https://push.example.com`, log in, subscribe to
    the `alerts` topic. Trigger a test problem and watch a rich alert with a graph and buttons

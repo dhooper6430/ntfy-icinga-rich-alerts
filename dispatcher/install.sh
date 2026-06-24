@@ -85,8 +85,10 @@ fi
 #   chown ${ICINGA_USER}:${ICINGA_USER} ${INSTALL_DIR}/dispatcher/config.yml
 #   chmod 0640 ${INSTALL_DIR}/dispatcher/config.yml
 #
-# You ALSO need the notification apply rules + the scoped "ntfy-broker" ApiUser — see
-# icinga2/ntfy-notifications.conf.example (or create them in Icinga Director).
+# You ALSO need the notification apply rules + a scoped ApiUser for the Ack/Downtime buttons:
+# "ntfy-broker" for the default broker transport, or "ntfy-relay" for the no-inbound relay
+# transport (see docs/reachability.md). See icinga2/ntfy-notifications.conf.example (or create
+# them in Icinga Director).
 if [ ! -f "${INSTALL_DIR}/dispatcher/config.yml" ]; then
   echo "NOTE: ${INSTALL_DIR}/dispatcher/config.yml is not present yet."
   echo "      Copy config.example.yml -> config.yml and fill it in before alerts will send."

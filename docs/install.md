@@ -65,17 +65,26 @@ On each phone: add server `https://push.example.com`, log in, subscribe to topic
 
 ---
 
-## 2. Icinga side: the scoped broker ApiUser + apply rules
+## 2. Icinga side: the scoped ApiUser + apply rules
 
-The broker calls Icinga as a **scoped** ApiUser limited to acknowledge + downtime. Add it (in a
-file readable only by icinga, `0640 nagios`):
+The Ack/Downtime buttons reach Icinga through a **scoped** ApiUser limited to acknowledge +
+downtime. Which user depends on the action **transport** you pick (see step 3 and
+[`reachability.md`](reachability.md)):
 
-```icinga
-object ApiUser "ntfy-broker" {
-  password = "CHANGE_ME"   // == ICINGA_API_PASSWORD in server/.env
-  permissions = [ "actions/acknowledge-problem", "actions/schedule-downtime" ]
-}
-```
+- **`broker` transport (default):** the phone POSTs the action to the broker, which calls Icinga as
+  ApiUser **`ntfy-broker`**. Add it (in a file readable only by icinga, `0640 nagios`):
+
+  ```icinga
+  object ApiUser "ntfy-broker" {
+    password = "CHANGE_ME"   // == ICINGA_API_PASSWORD in server/.env
+    permissions = [ "actions/acknowledge-problem", "actions/schedule-downtime" ]
+  }
+  ```
+
+- **`relay` transport (no inbound):** the buttons publish to an ntfy ack topic that `relay.py`
+  subscribes to outbound and applies locally — so there is no broker and no public endpoint. It
+  calls Icinga as ApiUser **`ntfy-relay`** with the *same* permissions. Define it the same way
+  (just rename the object) and see [`reachability.md`](reachability.md) for the full walk-through.
 
 Add the notification **User** and **apply rules** that route alerts to the dispatcher — copy
 `dispatcher/icinga2/ntfy-notifications.conf.example` and adapt, or create the equivalents in
@@ -116,6 +125,15 @@ chmod 0640 /opt/ntfy-icinga/dispatcher/config.yml
 ```
 
 Run the installer again whenever you update the code; it upgrades in place.
+
+> **Action buttons — two transports.** `actions.transport` in `config.yml` chooses how the
+> Ack/Downtime buttons reach Icinga. The default **`broker`** sends the action from the phone to the
+> broker (which must be reachable from the phone — public IP or tunnel; uses the `ntfy-broker`
+> ApiUser from step 2). The alternative **`relay`** needs **no inbound** at all: the buttons publish
+> to an ntfy ack topic that `relay.py` watches outbound and applies via the `ntfy-relay` ApiUser, so
+> the broker/server stack becomes optional and it works even against public ntfy.sh. The full
+> step-by-step (config keys + running `relay.py` via `dispatcher/relay.service.example`) is in
+> [`reachability.md`](reachability.md).
 
 > **HA / multiple masters:** run `install.sh` on each master and provide `config.yml` on each. To
 > dedup alerts across the pair, set `suppression.store: redis` and point every master's
@@ -159,6 +177,9 @@ out-of-band; the installer is intentionally secret-free so CI never has to carry
   log line `graph: none (text-only)`; verify the render backend URL/token and that the query
   returns a series. The `vm` backend needs the full matplotlib import chain — re-run `install.sh`,
   which force-reinstalls the pinned set if it's broken.
-- **Buttons return an error** — confirm the broker can reach the Icinga API, the `ntfy-broker`
-  ApiUser password matches `ICINGA_API_PASSWORD`, and `broker.shared_secret` equals
-  `BROKER_SHARED_SECRET`. "Already acknowledged / already in downtime" is reported as success.
+- **Buttons return an error** — on the **broker** transport, confirm the broker can reach the
+  Icinga API, the `ntfy-broker` ApiUser password matches `ICINGA_API_PASSWORD`, and
+  `broker.shared_secret` equals `BROKER_SHARED_SECRET`. On the **relay** transport, confirm
+  `relay.py` is running (e.g. `systemctl status ntfy-icinga-relay`), it can subscribe to the ack
+  topic, and the `ntfy-relay` ApiUser can reach the local Icinga API. "Already acknowledged /
+  already in downtime" is reported as success on either transport.

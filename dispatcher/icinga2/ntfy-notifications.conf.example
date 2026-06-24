@@ -9,8 +9,8 @@
  * dispatcher publishes with a token that has read-write on the topic (config.yml ntfy.token).
  * A single shared topic is REQUIRED: suppression is keyed per host!service (not per user), so
  * per-person topics would dedup each other away (only the first recipient processed gets each
- * alert). The Ack/Downtime buttons work for anyone who receives the notification (the broker
- * validates an HMAC token, not the user).
+ * alert). The Ack/Downtime buttons work for anyone who receives the notification (the action
+ * transport validates an HMAC token, not the user).
  */
 
 object User "ntfy-oncall" {
@@ -37,15 +37,23 @@ apply Notification "ntfy-service-notification" to Service {
 }
 
 /*
- * Scoped Icinga2 API user for the broker (Ack/Downtime action buttons). The broker calls the
- * Icinga API as this user; its password MUST equal ICINGA_API_PASSWORD in the server stack's
- * .env. Keep this in a file readable only by icinga (0640 nagios) — it carries a secret.
+ * Scoped Icinga2 API user for the Ack/Downtime action buttons. Which user you need depends on
+ * config.yml's `actions.transport`:
  *
- * object ApiUser "ntfy-broker" {
- *   password = "CHANGE_ME"   // == ICINGA_API_PASSWORD in server/.env
+ *   * "broker" (default): name the ApiUser "ntfy-broker". The broker calls the Icinga API as this
+ *     user; its password MUST equal ICINGA_API_PASSWORD in the server stack's .env.
+ *   * "relay" (no inbound): name the ApiUser "ntfy-relay" instead. dispatcher/relay.py calls the
+ *     LOCAL Icinga API as this user; its password is config.yml relay.icinga_api_password. See
+ *     docs/reachability.md.
+ *
+ * Either way the permissions are identical. Keep this in a file readable only by icinga
+ * (0640 nagios) — it carries a secret.
+ *
+ * object ApiUser "ntfy-broker" {           // or "ntfy-relay" for the relay transport
+ *   password = "CHANGE_ME"   // == ICINGA_API_PASSWORD in server/.env (broker), or relay.icinga_api_password
  *   permissions = [ "actions/acknowledge-problem", "actions/schedule-downtime" ]
  * }
  *
- * The Icinga API must be enabled (`icinga2 feature enable api`) and reachable from the host
- * running the broker (default port 5665).
+ * The Icinga API must be enabled (`icinga2 feature enable api`) and reachable from whatever runs
+ * the chosen transport (the broker host, or the relay on the master; default port 5665).
  */
