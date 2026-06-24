@@ -5,6 +5,11 @@ the public internet* that can in turn talk to your Icinga. By default that "some
 **broker**, so the broker URL (`https://push.example.com/broker/...`) must be reachable from the
 phone wherever it is. You do **not** need a static IP for this — pick whichever tier fits.
 
+> **Shortcut:** if you don't want to expose *anything*, jump to **option 3 (relay)**. Combined with
+> the public ntfy.sh it needs zero inbound and no `server/` stack or Caddy at all — your Icinga box
+> only makes outbound connections. Options 1–2 below are for when you self-host ntfy / the broker
+> and need to expose them.
+
 ## 1. Tunnel — recommended for home / dynamic IP / CGNAT
 
 A tunnel opens an **outbound** connection from your host and gives you a public hostname that

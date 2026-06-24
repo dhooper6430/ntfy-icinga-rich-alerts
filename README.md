@@ -70,6 +70,26 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
   front the stack with a **tunnel** (Cloudflare Tunnel or Tailscale Funnel) instead; see
   [`docs/reachability.md`](docs/reachability.md).
 
+## Which pieces do I actually need?
+
+The buttons and the graph work **both** ways — the only question is whether you self-host the ntfy
+server or point at a public one:
+
+| Setup | ntfy server | You run | Exposed to the internet | Trade-off |
+|---|---|---|---|---|
+| **Simplest** | public **ntfy.sh** | dispatcher + `relay.py` | **nothing** (all outbound) | alert *contents* transit ntfy.sh (not E2E-encrypted) |
+| **Own your data** | **self-hosted** (`server/`) | dispatcher + `server/` stack | the ntfy server, via **Caddy** or a **tunnel** | you host and expose ntfy |
+
+- **Simplest (ntfy.sh + relay):** set `actions.transport: relay` and `ntfy.attachment_via: upload`,
+  point `ntfy.base_url` at `https://ntfy.sh`, and run `dispatcher/relay.py`. No `server/` stack, no
+  broker, no Caddy, no open ports — your Icinga box only makes outbound connections.
+- **Own your data (self-hosted ntfy):** run the `server/` stack with **Caddy** (auto-HTTPS) or a
+  **tunnel** in front so phones can reach your ntfy. Acks can ride the broker (default) or the relay.
+
+**Caddy is only ever needed for the self-hosted path** — it terminates TLS for *your* ntfy server;
+the Acknowledge/Downtime buttons never require it. The rest of this README shows the self-hosted
+path; for the zero-infrastructure path see [`docs/reachability.md`](docs/reachability.md).
+
 ## Quick start
 
 1. **Stand up the server stack** (ntfy + broker) on a Docker host:
