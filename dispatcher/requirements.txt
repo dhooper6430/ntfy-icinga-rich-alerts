@@ -1,0 +1,18 @@
+# Core dispatcher dependencies
+requests>=2.31
+PyYAML>=6.0
+
+# vm render backend (Grafana-free sparkline graph on the alert).
+# numpy is pinned <2 for portability: numpy 2.x PyPI wheels are built with an x86-64-v2
+# baseline, so on an older/limited vCPU that only supports the x86-64 (v1) ABI, numpy 2.x
+# fails to import (RuntimeError: NumPy was built with baseline optimizations ... machine
+# doesn't support) — which silently drops the graph from every notification. numpy 1.x
+# wheels use the base x86-64 ABI and import everywhere. Bump this only if all your Icinga
+# masters support x86-64-v2 (most modern CPUs do).
+numpy<2
+matplotlib>=3.8,<4
+
+# Shared suppression store across multiple Icinga masters (dedups cross-master alert spam when
+# checks/notifications flap between masters in an HA pair). Only used when
+# suppression.store == "redis"; harmless to install otherwise.
+redis>=5.0

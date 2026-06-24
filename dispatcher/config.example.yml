@@ -1,0 +1,112 @@
+# Icinga rich-notifications dispatcher config.
+#
+# Copy to config.yml (gitignored) and fill in. Secrets may be supplied inline OR via
+# environment variables: any ${ENV_VAR} reference below is expanded at load time, so you can
+# keep tokens out of the file (e.g. export NTFY_TOKEN=... in the systemd unit / shell).
+
+ntfy:
+  # Base URL of your self-hosted ntfy server (no trailing slash). MUST be https for iOS push.
+  base_url: "https://push.example.com"
+  # Access token with write permission to the alert topic(s) (ntfy `tk_...`).
+  token: "${NTFY_TOKEN}"
+  # How the graph image reaches the phone:
+  #   "url"    -> we tell ntfy a URL on the broker and the phone fetches it (recommended;
+  #               keeps the heavy PNG off the ntfy POST and works great with the iOS relay).
+  #   "upload" -> we PUT the PNG bytes into ntfy's attachment cache.
+  #   "none"   -> never attach an image (text-only).
+  attachment_via: "url"
+
+icinga:
+  # Icinga Web 2 base URL, used for the notification's tap-through deep link. If Icinga Web is
+  # served at the document ROOT, point this at the root (a /icingaweb2 suffix is stripped
+  # defensively). If it lives under /icingaweb2, include that path.
+  web_url: "https://icinga.example.com"
+
+display:
+  # Domain suffixes stripped from host names in the alert title/body (display only — the full
+  # FQDN is still used for the metric query, the Icinga deep link, and ack/downtime). Leave
+  # empty to show the full name; add a suffix (e.g. ".example.com") if your host names are
+  # already descriptive and the domain is just noise on a phone.
+  strip_domains: []
+
+broker:
+  # Public base URL of the broker service (serves cached PNGs + handles Ack/Downtime
+  # action-button callbacks). Must be reachable from the phones.
+  base_url: "https://push.example.com/broker"
+  # Shared HMAC secret embedded in action-button callback + signed graph-fetch URLs.
+  # MUST equal BROKER_SHARED_SECRET in the server stack's .env.
+  shared_secret: "${BROKER_SHARED_SECRET}"
+
+render:
+  backend: "vm"                # "grafana" (render API) | "vm" (compact matplotlib sparkline)
+  cache_dir: "/opt/ntfy-icinga/cache"
+  cache_ttl: 300               # seconds; reuse a rendered PNG for the same host/service within this window
+  window: "3h"                 # graph look-back window
+  timeout: 8                   # seconds; render must finish well under Icinga's ~60s command timeout
+  tz_offset_hours: 0           # graph x-axis timezone offset from UTC (e.g. 8 for UTC+8). No DST handling.
+
+  grafana:
+    # Only used when backend == "grafana". Renders a parametric Grafana panel.
+    base_url: "http://grafana:3000"
+    token: "${GRAFANA_TOKEN}"  # Grafana service-account token (glsa_...)
+    # The parametric panel the dispatcher renders. The PromQL lives in the dashboard panel
+    # (templated by $host/$service), so the dispatcher stays metric-agnostic.
+    dashboard_uid: "icinga-perf"
+    dashboard_slug: "icinga-perfdata"
+    panel_id: 2
+    width: 1000
+    height: 500
+    scale: 2
+    theme: "light"
+
+  vm:
+    # Only used when backend == "vm". VictoriaMetrics Prometheus-compatible query API.
+    base_url: "http://victoriametrics.example.com:8481/select/0/prometheus"
+    # PromQL template rendered with {host} and {service}. MUST match your Icinga metric
+    # writer's label scheme — verify against your perfdata-to-metrics backend. Literal braces
+    # for the PromQL selector MUST be doubled ({{ }}) because this string goes through .format().
+    query_template: 'state_check_perfdata{{icinga2_host_name="{host}",icinga2_service_name="{service}"}}'
+    # Optional: metric label used as the graph title (falls back to __name__).
+    series_label: "perfdata_label"
+
+suppression:
+  store: "sqlite"              # "sqlite" (single master) | "redis" (HA / multiple masters)
+  sqlite_path: "/opt/ntfy-icinga/state/suppression.db"
+  # Used only when store == "redis". Shared across all masters so cross-master flap dedups.
+  redis_url: "redis://:${REDIS_PASSWORD}@redis.example.com:6379/0"
+  # Fixed-cooldown window per state, in seconds. Repeat PROBLEM notifications of the SAME hard
+  # state are suppressed until the window elapses, then one reminder is sent. A jump to a HIGHER
+  # severity (e.g. WARNING->CRITICAL) or a recovery breaks through and sends one extra alert.
+  cooldowns:
+    CRITICAL: 900
+    DOWN: 900
+    WARNING: 3600
+    UNKNOWN: 1800
+    OK: 0                      # recoveries always pass (also force-listed below)
+    UP: 0
+  # Notification types that ALWAYS bypass the cooldown (state-change / operational events).
+  always_notify_types:
+    - RECOVERY
+    - ACKNOWLEDGEMENT
+    - CUSTOM
+    - FLAPPINGSTART
+    - FLAPPINGEND
+    - DOWNTIMESTART
+    - DOWNTIMEEND
+
+routing:
+  # State -> ntfy priority (min|low|default|high|urgent). Drives sound / criticality.
+  # NOTE: this map shares CRITICAL:/WARNING: keys with suppression.cooldowns above — scope any
+  # edits to the right block.
+  priority_map:
+    CRITICAL: urgent
+    DOWN: urgent
+    WARNING: high
+    UNKNOWN: default
+    OK: low
+    UP: low
+  # Optional broadcast topic that ALSO receives sev-1 alerts (set to "" to disable).
+  crit_broadcast_topic: ""
+  crit_broadcast_states:
+    - CRITICAL
+    - DOWN

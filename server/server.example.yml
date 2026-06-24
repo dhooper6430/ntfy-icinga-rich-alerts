@@ -1,0 +1,33 @@
+# ntfy self-hosted server config. Docs: https://docs.ntfy.sh/config/
+# TLS is expected to be terminated by your reverse proxy in front of this; ntfy listens plain HTTP.
+# Copy to server.yml (gitignored) and adjust base-url to your domain.
+
+# Public base URL (TLS terminated upstream). MUST be https for iOS push.
+base-url: "https://push.example.com"
+
+# iOS instant push: the ntfy.sh upstream relays only a wake-up (a SHA256 of the topic) via
+# Apple APNs; the phone then fetches the real message + attachment from THIS server. Remove this
+# line if you only use Android / the web app and don't want to depend on the public relay.
+upstream-base-url: "https://ntfy.sh"
+
+listen-http: ":80"
+behind-proxy: true
+
+# Per-user auth + ACLs. Default-deny; grant each person access to their own topic.
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+enable-signup: false
+enable-login: true
+
+# Attachments (lock-screen graph thumbnails). The dispatcher's "url" path PUTs PNGs to the
+# broker, not here, but keep this enabled for the "upload" fallback path.
+attachment-cache-dir: "/var/lib/ntfy/attachments"
+attachment-total-size-limit: "5G"
+attachment-file-size-limit: "15M"
+attachment-expiry-duration: "3h"
+
+# Short server-side message history.
+cache-file: "/var/lib/ntfy/cache.db"
+cache-duration: "12h"
+
+log-level: "info"

@@ -1,0 +1,51 @@
+/*
+ * ntfy notification apply rules (example).
+ *
+ * Copy into your icinga2 conf.d (e.g. /etc/icinga2/conf.d/ntfy-notifications.conf) and adapt,
+ * OR create the equivalent User + Notifications in Icinga Director.
+ *
+ * Every notification goes to ONE shared topic, "alerts" (User "ntfy-oncall"). Each on-call
+ * person has their own ntfy login with READ access to that topic and subscribes to it. The
+ * dispatcher publishes with a token that has read-write on the topic (config.yml ntfy.token).
+ * A single shared topic is REQUIRED: suppression is keyed per host!service (not per user), so
+ * per-person topics would dedup each other away (only the first recipient processed gets each
+ * alert). The Ack/Downtime buttons work for anyone who receives the notification (the broker
+ * validates an HMAC token, not the user).
+ */
+
+object User "ntfy-oncall" {
+  display_name = "On-call (ntfy)"
+  vars.ntfy_topic = "alerts"
+}
+
+apply Notification "ntfy-host-notification" to Host {
+  command = "ntfy-host-notification"
+  users = [ "ntfy-oncall" ]
+  period = "24x7"
+  states = [ Down, Up ]
+  types = [ Acknowledgement, Custom, DowntimeEnd, DowntimeRemoved, DowntimeStart, Problem, Recovery ]
+  assign where host.name && host.enable_notifications
+}
+
+apply Notification "ntfy-service-notification" to Service {
+  command = "ntfy-service-notification"
+  users = [ "ntfy-oncall" ]
+  period = "24x7"
+  states = [ Critical, OK, Warning ]
+  types = [ Acknowledgement, DowntimeEnd, DowntimeRemoved, DowntimeStart, Problem, Recovery ]
+  assign where service.name && host.enable_notifications
+}
+
+/*
+ * Scoped Icinga2 API user for the broker (Ack/Downtime action buttons). The broker calls the
+ * Icinga API as this user; its password MUST equal ICINGA_API_PASSWORD in the server stack's
+ * .env. Keep this in a file readable only by icinga (0640 nagios) — it carries a secret.
+ *
+ * object ApiUser "ntfy-broker" {
+ *   password = "CHANGE_ME"   // == ICINGA_API_PASSWORD in server/.env
+ *   permissions = [ "actions/acknowledge-problem", "actions/schedule-downtime" ]
+ * }
+ *
+ * The Icinga API must be enabled (`icinga2 feature enable api`) and reachable from the host
+ * running the broker (default port 5665).
+ */
