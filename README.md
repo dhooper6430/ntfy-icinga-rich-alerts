@@ -28,8 +28,12 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
 - **Transparent single-metric graph** that blends into the phone's light/dark theme, large fonts
   for a small screen, and a **negative-axis flip** so an all-negative metric (e.g. a −48 V
   battery) reads as a *down* trend when its magnitude drops.
-- **Acknowledge / Downtime buttons** that POST to a small broker (HMAC-signed action tokens) which
-  calls the Icinga API behind a **scoped** API user — the Icinga credentials never touch the phone.
+- **Acknowledge / Downtime buttons** (HMAC-signed) that act on the Icinga API behind a **scoped**
+  API user — the Icinga credentials never touch the phone.
+- **Works with no inbound / no static IP** (optional **relay** mode): instead of the phone calling a
+  publicly-reachable broker, the buttons publish to an ntfy *ack topic* that a small local subscriber
+  (`relay.py`) watches outbound — so they work behind CGNAT or against ntfy.sh with nothing exposed.
+  See [docs/reachability.md](docs/reachability.md).
 - **IcingaDB Web deep link** ("Open in Icinga") on every alert.
 - **Two graph backends:** render a parametric **Grafana** panel, or draw a compact **matplotlib**
   sparkline straight from **VictoriaMetrics** (Grafana-free).
@@ -118,6 +122,8 @@ All dispatcher behaviour lives in `config.yml` (copy from `dispatcher/config.exa
 | `ntfy` | `attachment_via` | `url` (PNG served by broker, recommended), `upload`, or `none` |
 | `icinga` | `web_url` | base URL for the "Open in Icinga" deep link |
 | `broker` | `base_url` / `shared_secret` | the broker URL + HMAC secret (must match `server/.env`) |
+| `actions` | `transport` | `broker` (phone → broker) or `relay` (phone → ntfy ack topic → local `relay.py`, no inbound) |
+| `relay` | `ack_*` / `icinga_api_*` | the relay's ntfy read token + scoped Icinga API endpoint (relay transport only) |
 | `render` | `backend` | `grafana` (render a panel) or `vm` (matplotlib sparkline from VictoriaMetrics) |
 | `render` | `window` / `cache_ttl` / `timeout` | graph look-back, on-disk reuse window, render deadline |
 | `render` | `tz_offset_hours` | x-axis timezone offset from UTC (default `0`; e.g. `8` for UTC+8) |

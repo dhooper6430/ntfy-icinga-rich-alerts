@@ -73,31 +73,48 @@ def build_click_url(web_url: str, event: AlertEvent) -> str:
 
 
 def build_actions(cfg: dict, event: AlertEvent) -> list:
-    """Acknowledge + 1h Downtime buttons that call the broker (which talks to the Icinga API),
-    plus an Open-in-Icinga view button. Only for active problems."""
+    """Acknowledge + 1h Downtime buttons + an Open-in-Icinga view button. Active problems only.
+
+    Two transports (actions.transport):
+      * "broker" (default) — the buttons POST straight to the broker, which must be reachable
+        from the phone.
+      * "relay" — the buttons publish an HMAC-signed message to an ntfy ack topic; relay.py (an
+        OUTBOUND subscriber running next to the dispatcher) validates it and calls Icinga. Needs
+        no inbound exposure — works even against ntfy.sh. See docs/reachability.md.
+    Both carry the same HMAC token (broker.shared_secret) over "<action>:<host>:<service>"."""
     if not event.is_problem:
         return []
-    broker = cfg["broker"]["base_url"].rstrip("/")
     secret = cfg["broker"]["shared_secret"]
     host, service = event.host_name, event.service_name
     actor = event.user_name or "ntfy"
 
-    def http_action(label: str, path: str, action_key: str, extra: dict) -> dict:
-        payload = {"host": host, "service": service, "author": actor,
-                   "token": sign(secret, f"{action_key}:{host}:{service}"), **extra}
-        return {
-            "action": "http",
-            "label": label,
-            "url": f"{broker}{path}",
-            "method": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(payload),
-            "clear": True,
-        }
+    def payload(action_key: str, extra: dict) -> dict:
+        return {"action": action_key, "host": host, "service": service, "author": actor,
+                "token": sign(secret, f"{action_key}:{host}:{service}"), **extra}
+
+    if cfg.get("actions", {}).get("transport") == "relay":
+        acts = cfg["actions"]
+        url = f"{cfg['ntfy']['base_url'].rstrip('/')}/{acts['ack_topic']}"
+        base_headers = {}
+        if acts.get("ack_write_token"):
+            base_headers["Authorization"] = f"Bearer {acts['ack_write_token']}"
+
+        def action_btn(label: str, action_key: str, extra: dict) -> dict:
+            # POST publishes the signed payload as a message to the ack topic; relay.py reads it.
+            return {"action": "http", "label": label, "url": url, "method": "POST",
+                    "headers": dict(base_headers), "body": json.dumps(payload(action_key, extra)),
+                    "clear": True}
+    else:
+        broker = cfg["broker"]["base_url"].rstrip("/")
+
+        def action_btn(label: str, action_key: str, extra: dict) -> dict:
+            return {"action": "http", "label": label, "url": f"{broker}/{action_key}",
+                    "method": "POST", "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(payload(action_key, extra)), "clear": True}
 
     actions = [
-        http_action("Acknowledge", "/ack", "ack", {}),
-        http_action("Downtime 1h", "/downtime", "downtime", {"hours": 1}),
+        action_btn("Acknowledge", "ack", {}),
+        action_btn("Downtime 1h", "downtime", {"hours": 1}),
         {"action": "view", "label": "Open in Icinga",
          "url": build_click_url(cfg["icinga"]["web_url"], event), "clear": False},
     ]

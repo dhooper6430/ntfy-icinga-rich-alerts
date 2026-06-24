@@ -33,9 +33,32 @@ broker:
   # Public base URL of the broker service (serves cached PNGs + handles Ack/Downtime
   # action-button callbacks). Must be reachable from the phones.
   base_url: "https://push.example.com/broker"
-  # Shared HMAC secret embedded in action-button callback + signed graph-fetch URLs.
-  # MUST equal BROKER_SHARED_SECRET in the server stack's .env.
+  # Shared HMAC secret signing every Ack/Downtime action (used by BOTH the broker and the relay
+  # transports) + the signed graph-fetch URLs. MUST equal BROKER_SHARED_SECRET in the server .env.
   shared_secret: "${BROKER_SHARED_SECRET}"
+
+actions:
+  # How the Acknowledge / Downtime buttons reach Icinga:
+  #   "broker" (default) — the phone POSTs to the broker above; the broker must be reachable from
+  #                        the phone (public IP or tunnel — see docs/reachability.md).
+  #   "relay"            — the phone publishes a signed message to an ntfy ack topic and a local
+  #                        relay.py (subscribed OUTBOUND) calls Icinga. NO inbound needed; works
+  #                        even against ntfy.sh. Pair with ntfy.attachment_via: "upload".
+  transport: "broker"
+  # relay transport only:
+  ack_topic: "icinga-acks"                     # topic the buttons publish to and relay.py subscribes to
+  ack_write_token: "${NTFY_ACK_WRITE_TOKEN}"   # ntfy token with WRITE on ack_topic (embedded in the button)
+
+relay:
+  # Used only by relay.py, when actions.transport == "relay". Run it next to the dispatcher.
+  ack_read_token: "${NTFY_ACK_READ_TOKEN}"     # ntfy token with READ on ack_topic (the relay subscribes)
+  default_comment: "Actioned from ntfy"
+  # Icinga2 API the relay calls — use a scoped ApiUser (actions/acknowledge-problem +
+  # actions/schedule-downtime). The HMAC secret is broker.shared_secret above.
+  icinga_api_url: "https://localhost:5665"
+  icinga_api_user: "ntfy-relay"
+  icinga_api_password: "${ICINGA_API_PASSWORD}"
+  icinga_api_insecure: true                    # true skips TLS verify (self-signed); or set icinga_api_ca
 
 render:
   backend: "vm"                # "grafana" (render API) | "vm" (compact matplotlib sparkline)
