@@ -21,7 +21,9 @@ object User "ntfy-oncall" {
 apply Notification "ntfy-host-notification" to Host {
   command = "ntfy-host-notification"
   users = [ "ntfy-oncall" ]
-  period = "24x7"
+  // period = "24x7"   // optional: a TimePeriod you've defined. Omitted -> notify at any time.
+                       // (Don't reference "24x7" unless it exists on your install — e.g. from the
+                       //  default conf.d/timeperiods.conf — or validation fails.)
   states = [ Down, Up ]
   types = [ Acknowledgement, Custom, DowntimeEnd, DowntimeRemoved, DowntimeStart, Problem, Recovery ]
   assign where host.name && host.enable_notifications
@@ -30,7 +32,9 @@ apply Notification "ntfy-host-notification" to Host {
 apply Notification "ntfy-service-notification" to Service {
   command = "ntfy-service-notification"
   users = [ "ntfy-oncall" ]
-  period = "24x7"
+  // period = "24x7"   // optional: a TimePeriod you've defined. Omitted -> notify at any time.
+                       // (Don't reference "24x7" unless it exists on your install — e.g. from the
+                       //  default conf.d/timeperiods.conf — or validation fails.)
   states = [ Critical, OK, Warning ]
   types = [ Acknowledgement, DowntimeEnd, DowntimeRemoved, DowntimeStart, Problem, Recovery ]
   assign where service.name && host.enable_notifications
