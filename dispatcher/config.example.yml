@@ -47,7 +47,7 @@ relay:
   icinga_api_insecure: true                    # true skips TLS verify (self-signed); or set icinga_api_ca
 
 render:
-  backend: "vm"                # "grafana" (render API) | "vm" (compact matplotlib sparkline)
+  backend: "vm"                # "vm" | "graphite" (matplotlib sparkline) | "grafana" (render API)
   cache_dir: "/opt/ntfy-icinga/cache"
   cache_ttl: 300               # seconds; reuse a rendered PNG for the same host/service within this window
   window: "3h"                 # graph look-back window
@@ -77,6 +77,16 @@ render:
     query_template: 'state_check_perfdata{{icinga2_host_name="{host}",icinga2_service_name="{service}"}}'
     # Optional: metric label used as the graph title (falls back to __name__).
     series_label: "perfdata_label"
+
+  graphite:
+    # Only used when backend == "graphite" — graphite-web's render API (a plain Icinga 2 install that
+    # runs `icinga2 feature enable graphite`). {host}/{service} are substituted into the metric target;
+    # the defaults match Icinga2's default GraphiteWriter schema (dots in FQDNs nest, consistent on
+    # both write + query sides). The wildcards pick the first perfdata metric's value — adjust to your
+    # GraphiteWriter templates / metric-name escaping if they differ.
+    base_url: "http://localhost:8080"
+    target_template: "icinga2.{host}.services.{service}.*.perfdata.*.value"
+    host_target_template: "icinga2.{host}.host.*.perfdata.*.value"
 
 suppression:
   store: "sqlite"              # "sqlite" (single master) | "redis" (HA / multiple masters)

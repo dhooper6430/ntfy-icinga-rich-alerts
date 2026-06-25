@@ -92,11 +92,12 @@ if [ "${NONINTERACTIVE:-}" != "1" ] && [ -t 0 ]; then
     [ -n "$RELAY_TOKEN" ] || ask RELAY_TOKEN "ntfy READ token for the relay (tk_...; blank for public ntfy.sh topics)" ""
 
     ask WEB_URL     "Icinga Web URL (for the 'Open in Icinga' link)" "https://icinga.example.com/icingaweb2"
-    ask BACKEND     "graph backend: vm or grafana" "vm"
-    if [ "$BACKEND" = "grafana" ]; then
-      ask RENDER_URL "Grafana base URL" "http://localhost:3000"
-      ask GRAFANA_TOK "Grafana service-account token (glsa_...)" ""
-      RENDER_BLOCK="  grafana:
+    ask BACKEND     "graph backend: vm, graphite, or grafana" "vm"
+    case "$BACKEND" in
+      grafana)
+        ask RENDER_URL "Grafana base URL" "http://localhost:3000"
+        ask GRAFANA_TOK "Grafana service-account token (glsa_...)" ""
+        RENDER_BLOCK="  grafana:
     base_url: \"${RENDER_URL}\"
     token: \"${GRAFANA_TOK}\"
     dashboard_uid: \"icinga-perf\"
@@ -106,13 +107,23 @@ if [ "${NONINTERACTIVE:-}" != "1" ] && [ -t 0 ]; then
     height: 500
     scale: 2
     theme: \"light\""
-    else
-      ask RENDER_URL "VictoriaMetrics/Prometheus query base URL (incl. any path, e.g. http://vm:8481/select/0/prometheus)" "http://localhost:8428"
-      RENDER_BLOCK="  vm:
+        ;;
+      graphite)
+        ask RENDER_URL "graphite-web base URL" "http://localhost:8080"
+        RENDER_BLOCK="  graphite:
+    base_url: \"${RENDER_URL}\"
+    target_template: \"icinga2.{host}.services.{service}.*.perfdata.*.value\"
+    host_target_template: \"icinga2.{host}.host.*.perfdata.*.value\""
+        ;;
+      *)
+        BACKEND="vm"
+        ask RENDER_URL "VictoriaMetrics/Prometheus query base URL (incl. any path, e.g. http://vm:8481/select/0/prometheus)" "http://localhost:8428"
+        RENDER_BLOCK="  vm:
     base_url: \"${RENDER_URL}\"
     query_template: 'state_check_perfdata{{icinga2_host_name=\"{host}\",icinga2_service_name=\"{service}\"}}'
     series_label: \"perfdata_label\""
-    fi
+        ;;
+    esac
     ask API_URL "local Icinga API URL" "https://localhost:5665"
 
     SHARED_SECRET="$(openssl rand -hex 32)"

@@ -18,8 +18,9 @@ domain — and pick secrets with `openssl rand -hex 32`.
   ```
   (already running **Apache2** for Icinga Web — we reuse it as the TLS front for ntfy).
 - **Python 3.9+** (the dispatcher installer builds an isolated venv).
-- A graph data source — either a **Grafana** instance with a parametric panel, or a
-  **VictoriaMetrics** / Prometheus-compatible API holding your Icinga performance data.
+- A graph data source with your Icinga perfdata — **Graphite** (`icinga2 feature enable graphite`,
+  the most common for a plain install), a **VictoriaMetrics** / Prometheus-compatible API, or a
+  **Grafana** panel.
 
 Then clone this repo on the host — **every `server/…` and `dispatcher/…` path below is relative to
 it**, so run the rest of these commands from inside the clone:

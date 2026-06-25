@@ -53,7 +53,8 @@ The full walkthrough — ntfy + Apache setup, creating tokens, testing, and trou
 `install.sh` generates `config.yml` from your answers (re-run it to change them, or edit the file).
 Every option is documented in
 [`dispatcher/config.example.yml`](dispatcher/config.example.yml): the ntfy server + token, the graph
-backend (a parametric **Grafana** panel or a Grafana-free **VictoriaMetrics**/Prometheus sparkline),
+backend (a **Grafana** panel, or a Grafana-free matplotlib sparkline from **Graphite** or
+**VictoriaMetrics**/Prometheus),
 per-state cooldowns and ntfy priorities, host-name display trimming, and the suppression store —
 **SQLite** for one master or **Redis** shared across an HA pair so it doesn't double-alert.
 
@@ -62,8 +63,8 @@ per-state cooldowns and ntfy priorities, host-name display trimming, and the sup
 - A **Debian/Ubuntu** host running **Icinga 2** with the API feature enabled, already serving Icinga
   Web through **Apache** (reused as the TLS front for ntfy).
 - **Python 3.9+** (the installer builds an isolated venv) and **ntfy** (the native package).
-- A graph data source: a **Grafana** instance with a parametric panel, or a **VictoriaMetrics** /
-  Prometheus-compatible API holding your Icinga performance data.
+- A graph data source holding your Icinga perfdata — **Graphite** (`icinga2 feature enable graphite`,
+  the common one), a **VictoriaMetrics**/Prometheus-compatible API, or a **Grafana** panel.
 
 ## Security
 

@@ -1,9 +1,13 @@
 """Render a performance-graph PNG for an alert and return a local file path.
 
-Default backend "grafana": GET Grafana's render API for a parametric panel (the PromQL
-lives in the dashboard, templated by $host/$service, so this stays metric-agnostic).
-Optional backend "vm": query VictoriaMetrics' Prometheus API and draw a compact sparkline
-with matplotlib (lock-screen optimised). Results are cached on disk for cache_ttl seconds.
+Backends (config render.backend):
+  * "grafana"  — GET Grafana's render API for a parametric panel (the query lives in the
+                 dashboard, templated by $host/$service, so this stays metric-agnostic).
+  * "vm"       — query VictoriaMetrics' Prometheus API and draw a compact matplotlib sparkline.
+  * "graphite" — query graphite-web's render API (format=json) and draw the SAME sparkline.
+                 Suits a plain Icinga 2 install that runs `icinga2 feature enable graphite`.
+The "vm" and "graphite" backends share one lock-screen-optimised sparkline (transparent, single
+metric, negative-axis flip). Results are cached on disk for cache_ttl seconds.
 """
 from __future__ import annotations
 
@@ -62,6 +66,8 @@ def render_graph(event, cfg: dict) -> Optional[str]:
         timeout = float(cfg.get("timeout", 8))
         if backend == "vm":
             ok = _render_vm(event, cfg, path, timeout)
+        elif backend == "graphite":
+            ok = _render_graphite(event, cfg, path, timeout)
         else:
             ok = _render_grafana(event, cfg, path, timeout)
         return path if ok else None
@@ -100,50 +106,35 @@ def _render_grafana(event, cfg: dict, out_path: str, timeout: float) -> bool:
     return os.path.getsize(out_path) > 0
 
 
-def _render_vm(event, cfg: dict, out_path: str, timeout: float) -> bool:
-    import matplotlib  # lazy: only needed for the VM backend
+def _tz(cfg: dict):
+    """Fixed UTC offset for the x-axis (render.tz_offset_hours; default 0/UTC). No DST — fine for a
+    glanceable lock-screen sparkline."""
+    from datetime import timezone, timedelta
+
+    return timezone(timedelta(hours=int(cfg.get("tz_offset_hours", 0))))
+
+
+def _plot_sparkline(points, lbl: str, out_path: str, tz) -> bool:
+    """Draw the shared lock-screen sparkline from (epoch_seconds, value) points.
+
+    Transparent background + theme-neutral colours so it sits on a light OR dark notification;
+    one metric, big fonts. All-negative metrics (e.g. a -48V battery) get the y-axis flipped so a
+    magnitude drop reads as a DOWN trend (more-negative/healthier at the top).
+    """
+    import matplotlib  # lazy: only the matplotlib backends need it
 
     matplotlib.use("Agg")
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime
 
-    # Graph x-axis timezone: default UTC (offset 0). Override with render.tz_offset_hours in
-    # config.yml to render the x-axis in your local time (e.g. 8 for UTC+8). DST is not handled —
-    # this is a fixed offset, fine for a glanceable lock-screen sparkline.
-    tz = timezone(timedelta(hours=int(cfg.get("tz_offset_hours", 0))))
-    v = cfg["vm"]
-    base = v["base_url"].rstrip("/")
-    query = v["query_template"].format(host=event.host_name, service=event.service_name)
-    window = parse_duration(cfg.get("window", "3h"))
-    end = time.time()
-    start = end - window
-    step = max(window // 300, 15)
-
-    resp = requests.get(
-        f"{base}/api/v1/query_range",
-        params={"query": query, "start": start, "end": end, "step": step},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    series = resp.json().get("data", {}).get("result", [])
-    if not series:
-        raise RuntimeError("VictoriaMetrics returned no series for query")
-
-    # One clean graph — the first/primary metric only (multi-metric small-multiples were too busy
-    # for a lock screen). Transparent background + theme-neutral colours so it sits on a light OR
-    # dark notification; bigger fonts for a small screen.
-    label_key = v.get("series_label", "perfdata_label")
-    s = series[0]
-    xs = [datetime.fromtimestamp(float(t), tz=tz) for t, _ in s["values"]]
-    ys = [float(val) for _, val in s["values"]]
-    lbl = s.get("metric", {}).get(label_key) or s.get("metric", {}).get("__name__", "")
+    if not points:
+        raise RuntimeError("no datapoints to plot")
+    xs = [datetime.fromtimestamp(float(t), tz=tz) for t, _ in points]
+    ys = [float(v) for _, v in points]
 
     LINE = "#3b9eff"   # saturated blue — reads on both light and dark
     TEXT = "#8a8f98"   # neutral grey — legible on both (one static image can't perfectly match a theme)
-    # Negative metrics (e.g. a -48V battery): a magnitude drop makes the value rise toward 0, which
-    # on a normal axis trends UP and misreads as "voltage rising". Flip the y-axis (below) so a
-    # magnitude drop reads as a DOWN trend — more-negative (healthier) sits at the top.
     neg = bool(ys) and max(ys) <= 0
     fig, ax = plt.subplots(figsize=(7, 2.6), dpi=160)
     ax.plot(xs, ys, linewidth=2.6, color=LINE, solid_capstyle="round")
@@ -163,3 +154,71 @@ def _render_vm(event, cfg: dict, out_path: str, timeout: float) -> bool:
     fig.savefig(out_path, transparent=True)
     plt.close(fig)
     return os.path.getsize(out_path) > 0
+
+
+def _render_vm(event, cfg: dict, out_path: str, timeout: float) -> bool:
+    v = cfg["vm"]
+    base = v["base_url"].rstrip("/")
+    query = v["query_template"].format(host=event.host_name, service=event.service_name)
+    window = parse_duration(cfg.get("window", "3h"))
+    end = time.time()
+    start = end - window
+    step = max(window // 300, 15)
+
+    resp = requests.get(
+        f"{base}/api/v1/query_range",
+        params={"query": query, "start": start, "end": end, "step": step},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    series = resp.json().get("data", {}).get("result", [])
+    if not series:
+        raise RuntimeError("VictoriaMetrics returned no series for query")
+
+    # One clean graph — the first/primary metric only.
+    s = series[0]
+    label_key = v.get("series_label", "perfdata_label")
+    lbl = s.get("metric", {}).get(label_key) or s.get("metric", {}).get("__name__", "")
+    points = [(t, val) for t, val in s["values"]]
+    return _plot_sparkline(points, lbl, out_path, _tz(cfg))
+
+
+def _render_graphite(event, cfg: dict, out_path: str, timeout: float) -> bool:
+    g = cfg["graphite"]
+    base = g["base_url"].rstrip("/")
+    # Host and service perfdata live under different paths in Icinga2's GraphiteWriter, so the
+    # host template can differ; it falls back to target_template if unset.
+    tmpl = g["target_template"] if event.is_service else g.get("host_target_template", g["target_template"])
+    target = tmpl.format(host=event.host_name, service=event.service_name)
+
+    resp = requests.get(
+        f"{base}/render",
+        params={"target": target, "from": f"-{cfg.get('window', '3h')}",
+                "format": "json", "maxDataPoints": 500},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    series = resp.json()
+
+    # Graphite returns one entry per matched metric, each with [value, epoch] datapoints (value may
+    # be null for gaps). Take the first metric that actually has data.
+    points, lbl = None, ""
+    for s in series:
+        dps = [(ts, val) for val, ts in s.get("datapoints", []) if val is not None]
+        if dps:
+            points, lbl = dps, _graphite_label(s.get("target", ""))
+            break
+    if not points:
+        raise RuntimeError("Graphite returned no datapoints for target")
+    return _plot_sparkline(points, lbl, out_path, _tz(cfg))
+
+
+def _graphite_label(target: str) -> str:
+    """Pull the perfdata label out of an Icinga2 Graphite path:
+    'icinga2.host.services.svc.cmd.perfdata.<label>.value' -> '<label>'."""
+    parts = target.split(".")
+    if "perfdata" in parts:
+        i = parts.index("perfdata")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    return parts[-1] if parts else ""
