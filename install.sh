@@ -146,7 +146,12 @@ ntfy:
 icinga:
   web_url: "${WEB_URL}"
 display:
-  strip_domains: []
+  # Strip these domain suffixes from host names on the phone (display only — the FQDN is still used
+  # for the metric query, the deep link, and ack/downtime). Leading dot; first match wins. Replace
+  # the examples with your own domains, or set to [] to show full names.
+  strip_domains:
+    - ".myexampledomain.net"
+    - ".anotherexampledomain.com"
 actions:
   shared_secret: "${SHARED_SECRET}"
   ack_topic: "${ACK_TOPIC}"

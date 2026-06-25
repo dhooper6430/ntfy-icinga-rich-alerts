@@ -22,11 +22,14 @@ icinga:
   web_url: "https://icinga.example.com/icingaweb2"
 
 display:
-  # Domain suffixes stripped from host names in the alert title/body (display only — the full
-  # FQDN is still used for the metric query, the Icinga deep link, and ack/downtime). Leave
-  # empty to show the full name; add a suffix (e.g. ".example.com") if your host names are
-  # already descriptive and the domain is just noise on a phone.
-  strip_domains: []
+  # Domain suffixes stripped from host names in the alert title/body (display only — the full FQDN
+  # is still used for the metric query, the Icinga deep link, and ack/downtime). Each entry is a
+  # suffix WITH a leading dot; the first match wins. Replace the examples below with your own
+  # domains (these turn "web1.myexampledomain.net" into just "web1"), or set to [] to show full
+  # names.
+  strip_domains:
+    - ".myexampledomain.net"
+    - ".anotherexampledomain.com"
 
 actions:
   # The Acknowledge / Downtime buttons publish an HMAC-signed message to an ntfy ack topic;
