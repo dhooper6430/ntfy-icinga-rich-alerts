@@ -1,9 +1,9 @@
 """Compose and publish an ntfy message.
 
-Default path is JSON publishing with an `attach` URL (broker-served PNG). This cleanly
+Default path is JSON publishing with an `attach` URL (the PNG attached by URL). This cleanly
 supports multi-line markdown bodies, action buttons, click-through and image attachments.
-The "upload" path (PUT the PNG bytes into ntfy's attachment cache) is a fallback; note the
-ntfy header-based message used there is effectively single-line.
+The "upload" path (PUT the PNG bytes uploaded into ntfy's attachment cache) is a fallback; note
+the ntfy header-based message used there is effectively single-line.
 """
 from __future__ import annotations
 

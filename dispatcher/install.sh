@@ -77,18 +77,17 @@ else
 fi
 
 # --- Secrets are YOUR responsibility -----------------------------------------------------------
-# This installer does NOT write config.yml (it carries the ntfy token + broker shared secret).
+# This installer does NOT write config.yml (it carries the ntfy token + the actions HMAC secret).
 # Provide it once, out of band:
 #
 #   cp ${INSTALL_DIR}/dispatcher/config.example.yml ${INSTALL_DIR}/dispatcher/config.yml
-#   # edit config.yml: set ntfy.token, broker.shared_secret, render backend, etc.
+#   # edit config.yml: set ntfy.token, actions.shared_secret, render backend, etc.
 #   chown ${ICINGA_USER}:${ICINGA_USER} ${INSTALL_DIR}/dispatcher/config.yml
 #   chmod 0640 ${INSTALL_DIR}/dispatcher/config.yml
 #
-# You ALSO need the notification apply rules + a scoped ApiUser for the Ack/Downtime buttons:
-# "ntfy-broker" for the default broker transport, or "ntfy-relay" for the no-inbound relay
-# transport (see docs/reachability.md). See icinga2/ntfy-notifications.conf.example (or create
-# them in Icinga Director).
+# You ALSO need the notification apply rules + a scoped "ntfy-relay" ApiUser for the Ack/Downtime
+# buttons (see icinga2/ntfy-notifications.conf.example, or create them in Icinga Director), and the
+# relay running as a service (see relay.service.example). Full walk-through: docs/install.md.
 if [ ! -f "${INSTALL_DIR}/dispatcher/config.yml" ]; then
   echo "NOTE: ${INSTALL_DIR}/dispatcher/config.yml is not present yet."
   echo "      Copy config.example.yml -> config.yml and fill it in before alerts will send."

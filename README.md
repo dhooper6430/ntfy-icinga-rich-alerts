@@ -36,10 +36,9 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
   battery) reads as a *down* trend when its magnitude drops.
 - **Acknowledge / Downtime buttons** (HMAC-signed) that act on the Icinga API behind a **scoped**
   API user — the Icinga credentials never touch the phone.
-- **Works with no inbound / no static IP** (optional **relay** mode): instead of the phone calling a
-  publicly-reachable broker, the buttons publish to an ntfy *ack topic* that a small local subscriber
-  (`relay.py`) watches outbound — so they work behind CGNAT or against ntfy.sh with nothing exposed.
-  See [docs/reachability.md](docs/reachability.md).
+- **Nothing exposed inbound.** The buttons publish to an ntfy *ack topic* that a small local
+  subscriber (`relay.py`) watches **outbound** — so they work behind CGNAT or against ntfy.sh with
+  no inbound port-forward or tunnel.
 - **IcingaDB Web deep link** ("Open in Icinga") on every alert.
 - **Two graph backends:** render a parametric **Grafana** panel, or draw a compact **matplotlib**
   sparkline straight from **VictoriaMetrics** (Grafana-free).
@@ -50,99 +49,47 @@ you the same glanceable, actionable experience on infrastructure you run yoursel
 
 ```
             Icinga master                                  phone (ntfy app)
-   ┌───────────────────────────┐                        ┌──────────────────┐
-   │  NotificationCommand       │   publish (token)      │  subscribed to   │
-   │    └─ dispatcher (notify.py)├──────────────────────►│  topic "alerts"  │
-   │         renders graph PNG  │      ntfy server ◄──────┤  (push + buttons)│
-   │         + PUTs it to broker│   fetch graph / SSE     └────────┬─────────┘
-   └─────────┬─────────────────┘                                  │ taps
-             │ HMAC-signed PUT (graph)                            │ Ack / Downtime
-             │                                                    ▼
-        ┌────▼──────────────────────────┐  Icinga API (scoped ApiUser)  ┌──────────┐
-        │  broker  (Flask)              │ ─────────────────────────────►│  Icinga  │
-        │   /ack  /downtime  /graph/... │   acknowledge / schedule dt    │   API    │
-        └───────────────────────────────┘                                └──────────┘
+   ┌────────────────────────────┐                        ┌──────────────────┐
+   │  NotificationCommand        │   publish (+ graph)    │  subscribed to   │
+   │    └─ dispatcher (notify.py)├───────────────────────►│  topic "alerts"  │
+   │                             │     ntfy (behind       │  (push + buttons)│
+   │       relay.py  ◄───────────┤◄─── Apache, on master)─┤                  │
+   │         │ subscribes        │   push / live stream   └────────┬─────────┘
+   │         │ outbound to       │                                 │ taps
+   │         │ ack topic         │   publish signed action         │ Ack / Downtime
+   │         ▼                   │◄────────── ntfy ack topic ◄──────┘
+   │   local Icinga API          │
+   │   (scoped ApiUser)          │
+   └────────────────────────────┘
 
   graph data source (pick one): Grafana render API  OR  VictoriaMetrics query API
-  TLS for ntfy + broker is terminated by Caddy (server/Caddyfile.example) or a tunnel.
+  TLS for ntfy is terminated by the master's existing Apache (server/apache.example.conf).
 ```
 
-- **dispatcher** (`dispatcher/`) — Python, runs *on the Icinga master*, invoked by Icinga as a
-  `NotificationCommand`. Applies suppression, renders the graph, publishes the ntfy message.
-- **server stack** (`server/`) — Docker Compose: the **ntfy** server plus the **broker** (a small
-  Flask app serving graph PNGs and handling Ack/Downtime callbacks).
-- **Caddy** (opt-in `caddy` service) terminates TLS and fronts both, fetching a Let's Encrypt
-  certificate automatically — see `server/Caddyfile.example`. Behind CGNAT or without a static IP,
-  front the stack with a **tunnel** (Cloudflare Tunnel or Tailscale Funnel) instead; see
-  [`docs/reachability.md`](docs/reachability.md).
+- **dispatcher** (`dispatcher/notify.py`) — Python, runs *on the Icinga master*, invoked by Icinga
+  as a `NotificationCommand`. Applies suppression, renders the graph, publishes the ntfy message
+  (graph uploaded into ntfy).
+- **relay** (`dispatcher/relay.py`) — a small native service next to the dispatcher. Subscribes
+  outbound to an ntfy ack topic and applies the Acknowledge/Downtime actions to the local Icinga
+  API via a scoped ApiUser.
+- **ntfy** — self-hosted natively (`apt install ntfy`, no containers) on the same master, behind the
+  Apache that already serves Icinga Web (`server/apache.example.conf` terminates TLS so phones can
+  reach it).
 
-## Which pieces do I actually need?
+## Quick start
 
-The buttons and the graph work **both** ways — the only question is whether you self-host the ntfy
-server or point at a public one:
+A native, no-containers install on a single Debian/Ubuntu Icinga host:
 
-| Setup | ntfy server | You run | Exposed to the internet | Trade-off |
-|---|---|---|---|---|
-| **Simplest** | public **ntfy.sh** | dispatcher + `relay.py` | **nothing** (all outbound) | alert *contents* transit ntfy.sh (not E2E-encrypted) |
-| **Own your data** | **self-hosted** (`server/`) | dispatcher + `server/` stack | the ntfy server, via **Caddy** or a **tunnel** | you host and expose ntfy |
+1. Install ntfy (`apt install ntfy`) and put it behind your existing Apache (TLS).
+2. Install the dispatcher (`sudo dispatcher/install.sh`), fill in `config.yml`, wire the Icinga
+   notification + a scoped `ntfy-relay` ApiUser.
+3. Run `relay.py` (systemd), subscribe a phone to the alert topic, and test.
 
-- **Simplest (ntfy.sh + relay):** no Docker, no `server/` stack, no broker, no Caddy, no open ports —
-  just the dispatcher + `dispatcher/relay.py` running native on your Icinga host, all outbound.
-  Follow the **[ntfy.sh quick start →](docs/quickstart-ntfy-sh.md)**.
-- **Own your data (self-hosted ntfy):** run the `server/` stack with **Caddy** (auto-HTTPS) or a
-  **tunnel** in front so phones can reach your ntfy. Acks can ride the broker (default) or the relay.
+Full copy-paste walkthrough: **[docs/install.md](docs/install.md)**. The data flow is in
+**[docs/architecture.md](docs/architecture.md)**.
 
-**Caddy is only ever needed for the self-hosted path** — it terminates TLS for *your* ntfy server;
-the Acknowledge/Downtime buttons never require it. For the zero-infrastructure path, follow the
-**[ntfy.sh quick start](docs/quickstart-ntfy-sh.md)**; the Quick start below covers the self-hosted
-(Docker) path.
-
-## Quick start (self-hosted)
-
-> **Want the easiest path instead?** Use **ntfy.sh + the relay** — no Docker, nothing exposed, just
-> two native Python pieces on your Icinga host: **[docs/quickstart-ntfy-sh.md](docs/quickstart-ntfy-sh.md)**.
-> The steps below are the self-hosted (Docker) path.
-
-1. **Stand up the server stack** (ntfy + broker) on a Docker host:
-   ```bash
-   cd server
-   cp .env.example .env            # set BROKER_SHARED_SECRET, ICINGA_API_PASSWORD, ICINGA_API_URL
-   cp server.example.yml server.yml   # set base-url to your domain
-   docker compose up -d --build
-   ```
-   Put Caddy in front for TLS — copy `server/Caddyfile.example` to `Caddyfile`, set your domain,
-   and run `docker compose --profile caddy up -d`; Caddy provisions a Let's Encrypt certificate
-   automatically. No static IP / behind CGNAT? Use a tunnel instead — see
-   [`docs/reachability.md`](docs/reachability.md).
-
-2. **Create the ntfy users/topic.** Add a publisher token (read-write on the topic) for the
-   dispatcher, and a read-only login per person:
-   ```bash
-   docker exec ntfy ntfy access everyone alerts deny           # default deny
-   docker exec ntfy ntfy token add <publisher-user>            # -> tk_... for config.yml
-   docker exec -e NTFY_PASSWORD='...' ntfy ntfy user add alice
-   docker exec ntfy ntfy access alice alerts read
-   ```
-
-3. **Install the dispatcher on your Icinga master:**
-   ```bash
-   sudo dispatcher/install.sh        # builds a venv, installs the NotificationCommands, reloads icinga2
-   cp dispatcher/config.example.yml /opt/ntfy-icinga/dispatcher/config.yml
-   # edit config.yml: ntfy base_url + token, broker base_url + shared_secret, render backend
-   ```
-
-4. **Wire the NotificationCommand + apply rule** (and the scoped `ntfy-broker` ApiUser) — see
-   `dispatcher/icinga2/ntfy-notifications.conf.example`, or create the equivalents in Icinga
-   Director. *(No public IP / behind CGNAT? Switch `actions.transport` to `relay` and use the
-   `ntfy-relay` ApiUser instead — the buttons then ride ntfy with nothing exposed; see
-   [`docs/reachability.md`](docs/reachability.md).)*
-
-5. **Subscribe a phone:** point the ntfy app at `https://push.example.com`, log in, subscribe to
-   the `alerts` topic. Trigger a test problem and watch a rich alert with a graph and buttons
-   arrive.
-
-Full step-by-step is in [`docs/install.md`](docs/install.md); the data flow is in
-[`docs/architecture.md`](docs/architecture.md).
+> **Prefer zero self-hosting?** Point `ntfy.base_url` at `https://ntfy.sh` and skip the ntfy +
+> Apache steps — but free ntfy.sh topics are public, so use unguessable topic names.
 
 ## Configuration
 
@@ -151,21 +98,13 @@ All dispatcher behaviour lives in `config.yml` (copy from `dispatcher/config.exa
 
 | Section | Key | What it does |
 |---|---|---|
-| `ntfy` | `base_url` / `token` | your ntfy server + a write token for the topic |
-| `ntfy` | `attachment_via` | `url` (PNG served by broker, recommended), `upload`, or `none` |
+| `ntfy` | `base_url` / `token` | your ntfy server + a write token for the topic(s) |
 | `icinga` | `web_url` | base URL for the "Open in Icinga" deep link |
-| `broker` | `base_url` / `shared_secret` | the broker URL + HMAC secret (must match `server/.env`) |
-| `actions` | `transport` | `broker` (phone → broker) or `relay` (phone → ntfy ack topic → local `relay.py`, no inbound) |
-| `relay` | `ack_*` / `icinga_api_*` | the relay's ntfy read token + scoped Icinga API endpoint (relay transport only) |
+| `actions` | `shared_secret` / `ack_topic` | HMAC secret signing every action + the ntfy ack topic the buttons publish to |
+| `relay` | `ack_read_token` / `icinga_api_*` | the relay's ntfy read token + scoped local Icinga API endpoint |
 | `render` | `backend` | `grafana` (render a panel) or `vm` (matplotlib sparkline from VictoriaMetrics) |
-| `render` | `window` / `cache_ttl` / `timeout` | graph look-back, on-disk reuse window, render deadline |
-| `render` | `tz_offset_hours` | x-axis timezone offset from UTC (default `0`; e.g. `8` for UTC+8) |
-| `render.grafana` / `render.vm` | … | backend-specific URL, token, and the parametric query/panel |
 | `suppression` | `store` | `sqlite` (single master) or `redis` (HA / shared across masters) |
-| `suppression` | `cooldowns` | per-state quiet window in seconds (OK/UP = 0 → recoveries always send) |
-| `suppression` | `always_notify_types` | notification types that always bypass the cooldown |
 | `routing` | `priority_map` | state → ntfy priority (`min|low|default|high|urgent`) |
-| `routing` | `crit_broadcast_topic` | optional extra topic that also gets sev-1 alerts |
 | `display` | `strip_domains` | domain suffixes stripped from host names *in the title/body only* |
 
 ### How suppression works
@@ -185,26 +124,26 @@ store is unreachable the alert is sent anyway.
 
 ## Security
 
-- **You own the data.** Alerts, acknowledgements, and the graph all stay on infrastructure you
-  control. The only optional third party is the public ntfy.sh APNs relay used for iOS instant
-  push, and it only ever receives a SHA-256 wake-up of the topic name — never your message.
-- **TLS at the edge.** Neither ntfy nor the broker terminate TLS; put them behind the opt-in
-  **Caddy** service (`server/Caddyfile.example`), which provisions a Let's Encrypt certificate
-  automatically, or behind a **tunnel** (Cloudflare Tunnel / Tailscale Funnel) that supplies TLS —
-  see [`docs/reachability.md`](docs/reachability.md).
-- **Action buttons are HMAC-signed.** Each Ack/Downtime button carries a short HMAC token over
-  `action:host:service`, verified by the broker before it calls Icinga. The Icinga API itself is
-  reached through a **scoped** ApiUser limited to `acknowledge-problem` + `schedule-downtime`, so
-  the phone never holds Icinga credentials.
-- Keep `config.yml`, `server.yml`, and `.env` out of version control (the included `.gitignore`
-  already does this) — only the `*.example.*` templates are tracked.
+- **HMAC-signed actions.** Each Ack/Downtime button carries a short HMAC token over
+  `action:host:service` (signed with `actions.shared_secret`), verified by `relay.py` before it
+  calls Icinga. The phone never holds Icinga credentials.
+- **Scoped ApiUser.** The Icinga API is reached through a dedicated ApiUser limited to
+  `acknowledge-problem` + `schedule-downtime`.
+- **Self-hosted, all outbound.** Alerts, acknowledgements, and the graph stay on infrastructure
+  you control. The dispatcher and relay only make outbound connections; the only optional third
+  party is the public ntfy.sh APNs relay used for iOS instant push, which only ever receives a
+  SHA-256 wake-up of the topic name — never your message.
+- Keep `config.yml` and `server.yml` out of version control (the included `.gitignore` already
+  does this) — only the `*.example.*` templates are tracked.
 
 ## Requirements
 
-- **Icinga 2** with the API feature enabled (`icinga2 feature enable api`).
-- A **Docker** host for the `server/` stack (ntfy + broker) and a **reverse proxy** for TLS.
+- A **Debian/Ubuntu** host running **Icinga 2** with the API feature enabled
+  (`icinga2 feature enable api`), already serving Icinga Web behind **Apache2**.
 - **Python 3.9+** on the Icinga master (the installer builds an isolated venv). The `vm` render
   backend additionally needs `matplotlib` + `numpy` (installed automatically).
+- A self-hosted **ntfy** server (`apt install ntfy`, native — no containers) behind that **Apache** for
+  TLS. (Or point at the public **ntfy.sh** and skip self-hosting.)
 - A graph data source: a **Grafana** instance with a parametric panel, *or* **VictoriaMetrics**
   (or any Prometheus-compatible API) holding your Icinga perfdata.
 - The **ntfy** app on the devices you want to alert.

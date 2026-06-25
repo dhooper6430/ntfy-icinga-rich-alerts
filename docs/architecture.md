@@ -6,11 +6,10 @@ How the pieces fit together, and why.
 
 | Component | Where it runs | What it does |
 |---|---|---|
-| **dispatcher** (`dispatcher/notify.py`) | on the Icinga master | Invoked by Icinga as a `NotificationCommand`. Reads the alert from environment macros, applies suppression, renders a graph, and publishes a rich ntfy message. |
-| **ntfy server** (`server/` stack) | a Docker host | Self-hosted push server. Holds users/ACLs, relays push to subscribed phones, optionally piggybacks ntfy.sh for iOS APNs. |
-| **broker** (`server/broker/app.py`) | a Docker host (same stack) | Small Flask app. Serves the graph PNGs the dispatcher pushes, and handles the Acknowledge / Downtime button callbacks by calling the Icinga API. Used by the default **`broker`** action transport. |
-| **relay** (`dispatcher/relay.py`) | next to the dispatcher (Icinga master) | Alternative to the broker for the **`relay`** action transport (no inbound). Subscribes *outbound* to an ntfy ack topic, verifies the HMAC-signed action, and calls the **local** Icinga API. Run via `dispatcher/relay.service.example` (systemd). See [`reachability.md`](reachability.md). |
-| **Caddy** (`server/Caddyfile.example`) *or a tunnel* | your edge | Terminates TLS (auto Let's Encrypt) and routes `/` → ntfy and `/broker/` → broker. Opt-in `caddy` service, or front the stack with a tunnel — see [`reachability.md`](reachability.md). |
+| **dispatcher** (`dispatcher/notify.py`) | on the Icinga master | Invoked by Icinga as a `NotificationCommand`. Reads the alert from environment macros, applies suppression, renders a graph, and publishes a rich ntfy message (with the graph uploaded into ntfy). |
+| **relay** (`dispatcher/relay.py`) | next to the dispatcher (Icinga master) | Subscribes *outbound* to an ntfy ack topic, verifies the HMAC-signed Ack/Downtime action, and calls the **local** Icinga API as a scoped ApiUser. Run via `dispatcher/relay.service.example` (systemd). |
+| **ntfy server** | the Icinga master (native, no containers) | Self-hosted push server (`apt install ntfy`). Holds users/ACLs, relays push to subscribed phones, optionally piggybacks ntfy.sh for iOS APNs. Listens on `127.0.0.1`. |
+| **Apache** (`server/apache.example.conf`) | the Icinga master | The existing Apache that serves Icinga Web also reverse-proxies ntfy: terminates TLS and forwards `/` (and the WebSocket stream) to the local ntfy daemon, so phones can reach it. |
 | **graph data source** | existing | Either Grafana (render API) or VictoriaMetrics / Prometheus (query API) holding Icinga perfdata. |
 
 ## End-to-end flow
@@ -26,20 +25,20 @@ How the pieces fit together, and why.
                                               │
             (3) render graph PNG  ◄───────────┤  Grafana render API  OR  VictoriaMetrics query
                                               │
-            (4) PUT PNG (HMAC-signed) ────────┼──►  broker  (stores it, returns nothing)
-                                              │
-            (5) publish ntfy message ─────────┼──►  ntfy server
+            (4) publish ntfy message ─────────┼──►  ntfy server  (graph PNG uploaded with it)
                   title/body/priority/tags    │       │
-                  click (IcingaDB deep link)  │       │ (6) push to subscribed phones
+                  click (IcingaDB deep link)  │       │ (5) push to subscribed phones
                   actions (Ack / Downtime)    │       ▼
-                  attach (signed graph URL)    │    phone shows the alert + graph + buttons
+                  attached graph image        │    phone shows the alert + graph + buttons
                                               │       │
-                                              │       │ (7) user taps Acknowledge / Downtime
+                                              │       │ (6) user taps Acknowledge / Downtime
                                               │       ▼
-                                              │    HTTP POST (HMAC token) ──► broker ──► Icinga API
-                                              │                                  (scoped ApiUser)
+                                              │    publish signed action ──► ntfy ack topic
+                                              │                                    │
+                                              │       relay.py subscribes outbound ◄┘
+                                              │       └──► local Icinga API (scoped ApiUser)
                                               ▼
-                                       text-only fallback if any of (3)-(5) fail
+                                       text-only fallback if any of (3)-(4) fail
 ```
 
 1. A check enters a hard PROBLEM/RECOVERY state; Icinga runs the `ntfy-*-notification`
@@ -49,33 +48,20 @@ How the pieces fit together, and why.
 3. The dispatcher **renders a graph** of the primary metric. Two backends: Grafana's render API
    (a parametric panel) or a matplotlib sparkline drawn from VictoriaMetrics. Rendering never
    raises — any failure just means a text-only alert.
-4. The PNG is **PUT to the broker** over an HMAC-signed URL (no shared filesystem needed between
-   the master and the Docker host). The phone later fetches it from the broker.
-5. The dispatcher **publishes to ntfy** — title, body, priority (from the state→priority map),
+4. The dispatcher **publishes to ntfy** — title, body, priority (from the state→priority map),
    a click-through deep link into IcingaDB Web, the Acknowledge / Downtime action buttons, and the
-   `attach` URL for the graph.
-6. ntfy pushes to every subscribed device. For iOS, the public ntfy.sh upstream relays only a
+   graph PNG **uploaded into ntfy** (no shared filesystem, no separate graph host).
+5. ntfy pushes to every subscribed device. For iOS, the public ntfy.sh upstream relays only a
    wake-up hash via Apple APNs; the phone then fetches the real message + graph from your server.
-7. Tapping **Acknowledge** or **Downtime** carries an HMAC token over `action:host:service` to
-   whichever **action transport** is configured (see below), which verifies the token and calls the
+6. Tapping **Acknowledge** or **Downtime** publishes an HMAC-signed action message (a token over
+   `action:host:service`) to an ntfy **ack topic**. `relay.py` subscribes to that topic
+   **outbound** (exactly like the dispatcher publishes), verifies the token, and calls the local
    Icinga API as a **scoped** ApiUser (only `acknowledge-problem` + `schedule-downtime`).
    "Open in Icinga" just opens the deep link.
 
-## Action transports
-
-The Ack/Downtime path (step 7) has two interchangeable transports, set by `actions.transport` in
-`config.yml`. Both authorise every action with the same HMAC secret (`broker.shared_secret`) and a
-scoped ApiUser limited to `acknowledge-problem` + `schedule-downtime`:
-
-- **`broker`** (default) — the phone POSTs the action to the **broker**, which must be reachable
-  from the phone (public IP or tunnel) and calls Icinga as ApiUser `ntfy-broker`. This is the path
-  drawn in the flow above.
-- **`relay`** (no inbound) — the buttons publish the signed action to an ntfy *ack topic*;
-  `dispatcher/relay.py` subscribes to that topic **outbound** (exactly like the dispatcher
-  publishes) and calls the local Icinga API as ApiUser `ntfy-relay`. Paired with
-  `ntfy.attachment_via: upload` (graph rides ntfy too), nothing of yours is exposed — it works
-  behind CGNAT and even against public ntfy.sh, and the broker/server stack becomes optional. Full
-  step-by-step in [`reachability.md`](reachability.md).
+Because every connection the dispatcher and relay make is **outbound**, nothing of yours has to
+accept an inbound connection except ntfy itself (fronted by Apache) — the buttons work behind CGNAT
+and even against the public ntfy.sh.
 
 ## Suppression model
 
@@ -92,13 +78,13 @@ Severity ranks: `OK/UP = 0 < WARNING = 1 < UNKNOWN = 2 < CRITICAL/DOWN = 3`. Plu
 **SQLite** (single master, stdlib only) or **Redis** (shared across an HA pair so cross-master
 flap dedups). The whole engine fails open on store errors.
 
-## Why a broker (and not the phone calling Icinga directly)
+## Why the relay (and not the phone calling Icinga directly)
 
 - The Icinga API credentials never touch the device. The phone only ever holds a short HMAC token
-  scoped to one `host!service` action.
-- The broker doubles as the graph host, so the master needs no shared filesystem with the Docker
-  host — it just PUTs the PNG over a signed URL.
-- The broker collapses Icinga's "already acknowledged / already in downtime" (HTTP 409) into an
+  scoped to one `host!service` action, embedded in the button.
+- Every connection is outbound: the dispatcher publishes, the relay subscribes. Nothing needs an
+  inbound port-forward or tunnel, so it works behind CGNAT and even against public ntfy.sh.
+- The relay collapses Icinga's "already acknowledged / already in downtime" (HTTP 409) into an
   idempotent success, so a double-tap doesn't surface an error on the phone.
 
 ## Notable rendering choices

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Ack relay — make the Acknowledge / Downtime buttons work with NO inbound exposure.
 
-In "relay" action mode (config: actions.transport = relay) the notification buttons publish a
-small HMAC-signed message to an ntfy *ack topic* instead of POSTing to the broker. This service
+The notification buttons publish a small HMAC-signed message to an ntfy *ack topic*. This service
 SUBSCRIBES to that topic — an outbound connection, exactly like the dispatcher's publish — and for
 each valid message calls the local Icinga2 API to acknowledge the problem or schedule downtime.
 
@@ -11,7 +10,7 @@ port-forward and no tunnel: point the dispatcher and the phone at a reachable nt
 the public ntfy.sh) and run this next to the dispatcher.
 
 Config is read from the dispatcher's config.yml (see config.example.yml: the `relay:` section,
-plus ntfy.base_url, actions.ack_topic and broker.shared_secret). Run it as a long-lived service —
+plus ntfy.base_url, actions.ack_topic and actions.shared_secret). Run it as a long-lived service —
 see relay.service.example for a systemd unit.
 """
 from __future__ import annotations
@@ -45,7 +44,7 @@ def verify(secret: str, value: str, token: str) -> bool:
 
 
 class IcingaClient:
-    """Minimal Icinga2 /v1/actions client (mirrors the broker's, kept self-contained)."""
+    """Minimal Icinga2 /v1/actions client (self-contained)."""
 
     def __init__(self, rcfg: dict) -> None:
         self.url = str(rcfg.get("icinga_api_url", "https://localhost:5665")).rstrip("/")
@@ -121,7 +120,7 @@ def subscribe_loop(cfg: dict) -> None:
     base = cfg["ntfy"]["base_url"].rstrip("/")
     topic = cfg["actions"]["ack_topic"]
     rcfg = cfg.get("relay", {})
-    secret = cfg["broker"]["shared_secret"]
+    secret = cfg["actions"]["shared_secret"]
     default_comment = rcfg.get("default_comment", "Actioned from ntfy")
     icinga = IcingaClient(rcfg)
     url = f"{base}/{topic}/json"
@@ -153,9 +152,6 @@ def subscribe_loop(cfg: dict) -> None:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s relay: %(message)s")
     cfg = load_config(os.environ.get("DISPATCHER_CONFIG", DEFAULT_CONFIG))
-    if cfg.get("actions", {}).get("transport") != "relay":
-        log.error("actions.transport is not 'relay' in config.yml — nothing for the relay to do")
-        return 1
     subscribe_loop(cfg)
     return 0
 

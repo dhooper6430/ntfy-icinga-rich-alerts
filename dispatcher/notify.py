@@ -48,7 +48,7 @@ STATE_TAGS = {
 
 
 def sign(secret: str, value: str) -> str:
-    """Short HMAC token authorising a broker callback / graph fetch."""
+    """Short HMAC token authorising an Acknowledge / Downtime action."""
     return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()[:32]
 
 
@@ -75,42 +75,28 @@ def build_click_url(web_url: str, event: AlertEvent) -> str:
 def build_actions(cfg: dict, event: AlertEvent) -> list:
     """Acknowledge + 1h Downtime buttons + an Open-in-Icinga view button. Active problems only.
 
-    Two transports (actions.transport):
-      * "broker" (default) — the buttons POST straight to the broker, which must be reachable
-        from the phone.
-      * "relay" — the buttons publish an HMAC-signed message to an ntfy ack topic; relay.py (an
-        OUTBOUND subscriber running next to the dispatcher) validates it and calls Icinga. Needs
-        no inbound exposure — works even against ntfy.sh. See docs/reachability.md.
-    Both carry the same HMAC token (broker.shared_secret) over "<action>:<host>:<service>"."""
+    The buttons publish an HMAC-signed message to an ntfy ack topic; relay.py (an OUTBOUND
+    subscriber running next to the dispatcher) validates it and applies it to Icinga. Nothing of
+    yours has to accept an inbound connection beyond ntfy itself. The token is an HMAC
+    (actions.shared_secret) over "<action>:<host>:<service>"."""
     if not event.is_problem:
         return []
-    secret = cfg["broker"]["shared_secret"]
+    acts = cfg["actions"]
+    secret = acts["shared_secret"]
     host, service = event.host_name, event.service_name
     actor = event.user_name or "ntfy"
 
-    def payload(action_key: str, extra: dict) -> dict:
-        return {"action": action_key, "host": host, "service": service, "author": actor,
+    url = f"{cfg['ntfy']['base_url'].rstrip('/')}/{acts['ack_topic']}"
+    headers = {}
+    if acts.get("ack_write_token"):
+        headers["Authorization"] = f"Bearer {acts['ack_write_token']}"
+
+    def action_btn(label: str, action_key: str, extra: dict) -> dict:
+        # POST publishes the signed payload as a message to the ack topic; relay.py reads it.
+        body = {"action": action_key, "host": host, "service": service, "author": actor,
                 "token": sign(secret, f"{action_key}:{host}:{service}"), **extra}
-
-    if cfg.get("actions", {}).get("transport") == "relay":
-        acts = cfg["actions"]
-        url = f"{cfg['ntfy']['base_url'].rstrip('/')}/{acts['ack_topic']}"
-        base_headers = {}
-        if acts.get("ack_write_token"):
-            base_headers["Authorization"] = f"Bearer {acts['ack_write_token']}"
-
-        def action_btn(label: str, action_key: str, extra: dict) -> dict:
-            # POST publishes the signed payload as a message to the ack topic; relay.py reads it.
-            return {"action": "http", "label": label, "url": url, "method": "POST",
-                    "headers": dict(base_headers), "body": json.dumps(payload(action_key, extra)),
-                    "clear": True}
-    else:
-        broker = cfg["broker"]["base_url"].rstrip("/")
-
-        def action_btn(label: str, action_key: str, extra: dict) -> dict:
-            return {"action": "http", "label": label, "url": f"{broker}/{action_key}",
-                    "method": "POST", "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload(action_key, extra)), "clear": True}
+        return {"action": "http", "label": label, "url": url, "method": "POST",
+                "headers": dict(headers), "body": json.dumps(body), "clear": True}
 
     actions = [
         action_btn("Acknowledge", "ack", {}),
@@ -121,31 +107,9 @@ def build_actions(cfg: dict, event: AlertEvent) -> list:
     return actions[:3]  # ntfy caps at 3
 
 
-def graph_url(cfg: dict, url_filename: str) -> str:
-    """Signed broker URL the phone fetches the graph PNG from."""
-    broker = cfg["broker"]["base_url"].rstrip("/")
-    token = sign(cfg["broker"]["shared_secret"], url_filename)
-    return f"{broker}/graph/{url_filename}?t={token}"
-
-
-def upload_graph(cfg: dict, graph_path: str, timeout: float = 8) -> str:
-    """PUT the rendered PNG to the broker (no shared filesystem needed). Returns the signed
-    fetch URL, or "" on failure (caller falls back to text-only)."""
-    url_filename = os.path.basename(graph_path)
-    url = graph_url(cfg, url_filename)
-    try:
-        with open(graph_path, "rb") as fh:
-            resp = requests.put(url, data=fh, timeout=timeout)
-        resp.raise_for_status()
-        return url
-    except Exception as exc:
-        log.warning("graph upload to broker failed: %s", exc)
-        return ""
-
-
 def short_host(cfg: dict, name: str) -> str:
     """Strip a configured domain suffix from a host name *for display only*. The full FQDN is
-    still used for the metric query, the Icinga deep link, and broker ack/downtime. Useful when
+    still used for the metric query, the Icinga deep link, and the ack/downtime action. Useful when
     host names are already descriptive and the domain is just noise on a phone. Configure the
     suffix list with display.strip_domains (default: empty, i.e. show the full name)."""
     for suffix in cfg.get("display", {}).get("strip_domains", []):
@@ -250,22 +214,16 @@ def main(argv=None) -> int:
     except Exception as exc:
         log.error("suppression store error (%s) — failing OPEN (sending)", exc)
 
-    attach_via = cfg["ntfy"].get("attachment_via", "url")
-    attach_url = ""
+    # The graph rides ntfy itself: attachment_via "upload" PUTs the PNG into ntfy (no separate
+    # graph host, no shared filesystem). Use "none" for text-only.
+    attach_via = cfg["ntfy"].get("attachment_via", "upload")
     attach_file = ""
     display_name = f"{event.host_name}-{event.service_name or 'host'}.png"
-    if attach_via != "none":
+    if attach_via == "upload":
         graph_path = render_graph(event, cfg["render"])
         log.info("graph: %s", graph_path or "none (text-only)")
         if graph_path:
-            if attach_via == "upload":
-                attach_file = graph_path
-            elif args.dry_run:  # show the URL without pushing to the broker
-                attach_url = graph_url(cfg, os.path.basename(graph_path))
-            else:  # url: push the PNG to the broker; the phone fetches it from there
-                attach_url = upload_graph(
-                    cfg, graph_path, timeout=float(cfg["render"].get("timeout", 8))
-                )
+            attach_file = graph_path
 
     client = NtfyClient(cfg["ntfy"]["base_url"], cfg["ntfy"].get("token", ""))
     timeout = float(cfg["ntfy"].get("timeout", 10))
@@ -273,7 +231,7 @@ def main(argv=None) -> int:
     for topic in topics:
         msg = build_message(
             cfg, event, topic,
-            attach_url=attach_url, attach_file=attach_file, filename=display_name,
+            attach_file=attach_file, filename=display_name,
         )
         try:
             result = client.publish(msg, timeout=timeout, dry_run=args.dry_run)

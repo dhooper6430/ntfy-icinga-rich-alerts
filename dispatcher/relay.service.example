@@ -1,4 +1,4 @@
-# systemd unit for the ntfy-icinga ack relay (used when actions.transport: relay).
+# systemd unit for the ntfy-icinga ack relay (subscribes to the ntfy ack topic, applies actions).
 #
 # Install:
 #   sudo cp relay.service.example /etc/systemd/system/ntfy-icinga-relay.service

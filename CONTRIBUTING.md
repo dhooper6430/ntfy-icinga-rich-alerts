@@ -12,8 +12,8 @@ project, and contributions of all sizes are welcome — bug reports, docs fixes,
 
 ## Development notes
 
-The dispatcher is plain Python 3 (standard library + `requests`, `PyYAML`, and optionally
-`matplotlib`/`numpy` for the `vm` render backend). The broker is a small Flask app.
+The dispatcher and the relay are plain Python 3 (standard library + `requests`, `PyYAML`, and
+optionally `matplotlib`/`numpy` for the `vm` render backend).
 
 - Keep it dependency-light and metric-agnostic — the PromQL/panel lives in *your* config, not
   in the code.
