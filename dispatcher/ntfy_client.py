@@ -73,15 +73,18 @@ class NtfyClient:
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    def _publish_upload(self, msg: NtfyMessage, timeout: float, dry_run: bool):
-        url = f"{self.base}/{msg.topic}"
+    def _upload_headers(self, msg: NtfyMessage) -> dict:
+        # Free-text header values are encoded to UTF-8 *bytes*. Left as str, requests encodes header
+        # values as Latin-1, so a "·" (U+00B7) goes out as the lone byte 0xB7 — which ntfy then
+        # serves as invalid UTF-8, rendering on the phone as the � replacement char. Sending real
+        # UTF-8 bytes (as curl/the ntfy CLI do) makes "·", "°C", etc. survive intact.
         headers = self._auth()
         headers.update(
             {
-                "X-Title": msg.title,
-                "X-Message": msg.body.replace("\n", " "),  # headers are single-line
+                "X-Title": msg.title.encode("utf-8"),
+                "X-Message": msg.body.replace("\n", " ").encode("utf-8"),  # headers are single-line
                 "X-Priority": str(PRIORITY_NUM.get(msg.priority, 3)),
-                "X-Filename": msg.filename,
+                "X-Filename": msg.filename.encode("utf-8"),
             }
         )
         if msg.tags:
@@ -89,11 +92,17 @@ class NtfyClient:
         if msg.click:
             headers["X-Click"] = msg.click
         if msg.actions:
-            headers["X-Actions"] = json.dumps(msg.actions)
+            headers["X-Actions"] = json.dumps(msg.actions)  # json.dumps is ASCII-safe by default
         if msg.markdown:
             headers["X-Markdown"] = "yes"
+        return headers
+
+    def _publish_upload(self, msg: NtfyMessage, timeout: float, dry_run: bool):
+        url = f"{self.base}/{msg.topic}"
+        headers = self._upload_headers(msg)
         if dry_run:
-            shown = {k: v for k, v in headers.items() if k != "Authorization"}
+            shown = {k: (v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else v)
+                     for k, v in headers.items() if k != "Authorization"}
             return {"mode": "upload", "url": url, "headers": shown, "file": msg.attach_file}
         with open(msg.attach_file, "rb") as fh:
             resp = requests.put(url, data=fh, headers=headers, timeout=timeout)
