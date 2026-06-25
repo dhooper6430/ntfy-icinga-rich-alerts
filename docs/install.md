@@ -21,6 +21,15 @@ domain — and pick secrets with `openssl rand -hex 32`.
 - A graph data source — either a **Grafana** instance with a parametric panel, or a
   **VictoriaMetrics** / Prometheus-compatible API holding your Icinga performance data.
 
+Then clone this repo on the host — **every `server/…` and `dispatcher/…` path below is relative to
+it**, so run the rest of these commands from inside the clone:
+
+```bash
+sudo apt install -y git
+git clone https://github.com/dhooper6430/ntfy-icinga-rich-alerts.git
+cd ntfy-icinga-rich-alerts
+```
+
 ---
 
 ## 1. Install ntfy (native)
