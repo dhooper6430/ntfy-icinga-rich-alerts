@@ -15,10 +15,11 @@ ntfy:
   attachment_via: "upload"
 
 icinga:
-  # Icinga Web 2 base URL, used for the notification's tap-through deep link. If Icinga Web is
-  # served at the document ROOT, point this at the root (a /icingaweb2 suffix is stripped
-  # defensively). If it lives under /icingaweb2, include that path.
-  web_url: "https://icinga.example.com"
+  # Your Icinga Web base URL for the notification's tap-through link. The link appends
+  # /icingadb/... to this, so it requires the IcingaDB Web module (the modern 'icingadb' module,
+  # NOT the legacy 'monitoring' one). Usually ends in /icingaweb2; use the document root instead
+  # only if you serve Icinga Web there.
+  web_url: "https://icinga.example.com/icingaweb2"
 
 display:
   # Domain suffixes stripped from host names in the alert title/body (display only — the full

@@ -85,8 +85,10 @@ per-state cooldowns and ntfy priorities, host-name display trimming, and the sup
 
 ## Requirements
 
-- A **Debian/Ubuntu** host running **Icinga 2** with the API feature enabled, already serving Icinga
-  Web through **Apache** (reused as the TLS front for ntfy).
+- A **Debian/Ubuntu** host running **Icinga 2** (API feature enabled) with **Icinga Web + the
+  IcingaDB Web module** — the "Open in Icinga" link uses `/icingadb/…` URLs, so the legacy
+  `monitoring` module isn't supported. Icinga Web is served through **Apache**, which we reuse as the
+  TLS front for ntfy.
 - **Python 3.9+** (the installer builds an isolated venv) and **ntfy** (the native package).
 - A graph data source holding your Icinga perfdata — **Graphite** (`icinga2 feature enable graphite`,
   the common one), a **VictoriaMetrics**/Prometheus-compatible API, or a **Grafana** panel.

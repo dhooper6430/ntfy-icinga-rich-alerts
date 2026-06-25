@@ -53,17 +53,15 @@ def sign(secret: str, value: str) -> str:
 
 
 def build_click_url(web_url: str, event: AlertEvent) -> str:
-    """Deep link into Icinga Web (IcingaDB Web).
+    """Deep link into Icinga Web's **IcingaDB Web** module.
 
-    Some installs serve Icinga Web at the document ROOT (e.g.
-    https://icinga.example.com/icingadb/service?...), others under /icingaweb2. If your
-    Icinga Web is at the root, point web_url at the root and we strip a legacy /icingaweb2
-    suffix defensively (a /icingaweb2 path there 404s and breaks the page's CSS/JS). A
-    direct (not #!) link is used so it survives the login redirect; %20 encoding matches the
-    form Icinga Web itself emits."""
+    This project targets IcingaDB Web (the modern `icingadb` module) — the link points at
+    `/icingadb/host|service`, which the legacy `monitoring` module does not serve. We simply append
+    that path to your configured `icinga.web_url`, so set web_url to your Icinga Web base: usually
+    `https://icinga.example.com/icingaweb2` (a standard install), or the document root if you serve
+    Icinga Web there. A direct (not #!) link is used so it survives the login redirect; %20 encoding
+    matches the form Icinga Web itself emits."""
     base = web_url.rstrip("/")
-    if base.endswith("/icingaweb2"):
-        base = base[: -len("/icingaweb2")]
     if event.is_service:
         q = urllib.parse.urlencode({"name": event.service_name, "host.name": event.host_name},
                                    quote_via=urllib.parse.quote)
