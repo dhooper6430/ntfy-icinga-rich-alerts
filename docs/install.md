@@ -105,81 +105,40 @@ user), so per-person topics would dedup each other away.
 
 ---
 
-## 4. Install the dispatcher on the Icinga master
+## 4. Install and configure the dispatcher
+
+`dispatcher/install.sh`, run **interactively**, installs the dispatcher and then asks a handful of
+questions — your ntfy URL, the alert/ack topics, the dispatcher + relay tokens (from step 3), the
+graph backend + its URL, your Icinga Web URL, and the local Icinga API URL. From your answers it
+writes **all three** config files and auto-generates the HMAC secret and the ApiUser password:
+
+- `config.yml` — the dispatcher config,
+- `/etc/icinga2/conf.d/ntfy-relay-apiuser.conf` — the scoped `ntfy-relay` ApiUser
+  (`actions/acknowledge-problem` + `actions/schedule-downtime`),
+- `/etc/icinga2/conf.d/ntfy-notifications.conf` — the notification apply rules, with your alert topic.
 
 ```bash
-sudo apt install python3-venv
-sudo dispatcher/install.sh
+sudo apt install -y python3-venv
+sudo dispatcher/install.sh        # answer the prompts
 ```
 
-The installer (idempotent — re-run it to upgrade in place):
+It then validates the Icinga config (`icinga2 daemon -C`) and reloads. Two things to check afterward:
 
-- creates `/opt/ntfy-icinga` (override with `INSTALL_DIR=...`),
-- copies the dispatcher code there and builds an isolated venv,
-- `pip install`s the requirements (including matplotlib/numpy for the `vm` backend),
-- installs `ntfy-commands.conf` into `/etc/icinga2/conf.d` (override with `CONFD=...`),
-- runs `icinga2 daemon -C`, and only on success **reloads** icinga2.
+- The Icinga **API feature** must be enabled and reachable from the master (step 0:
+  `icinga2 feature enable api`) — the relay calls it on `https://localhost:5665`.
+- The generated `ntfy-notifications.conf` notifies **every** host/service with `enable_notifications`;
+  narrow the `assign where` in that file if you want a smaller scope, then `sudo systemctl reload icinga2`.
 
-It does **not** write secrets. Provide `config.yml` yourself:
+> Re-running `install.sh` upgrades the code in place and asks before overwriting an existing
+> `config.yml`. For CI / unattended installs, set `NONINTERACTIVE=1` to install the code only and
+> provide `config.yml` yourself (copy `dispatcher/config.example.yml`).
 
-```bash
-cp /opt/ntfy-icinga/dispatcher/config.example.yml /opt/ntfy-icinga/dispatcher/config.yml
-#  edit config.yml:
-#    ntfy.base_url            = https://push.example.com   (or https://ntfy.sh for the no-self-host path)
-#    ntfy.token               = tk_...                     (the dispatcher token from step 3)
-#    actions.shared_secret    = openssl rand -hex 32       (HMAC on every Ack/Downtime action)
-#    actions.ack_topic        = icinga-acks                (the ack topic from step 3)
-#    actions.ack_write_token  = tk_...                     (dispatcher token; WRITE on the ack topic)
-#    relay.ack_read_token     = tk_...                     (the relay token from step 3; READ on the ack topic)
-#    relay.icinga_api_url/user/password   = the scoped ntfy-relay ApiUser (step 5)
-#    render.backend           = vm   (or grafana)  + the matching render.vm / render.grafana block
-#    icinga.web_url           = https://icinga.example.com (for the "Open in Icinga" deep link)
-chown nagios:nagios /opt/ntfy-icinga/dispatcher/config.yml
-chmod 0640 /opt/ntfy-icinga/dispatcher/config.yml
-```
-
-> **HA / multiple masters:** run `install.sh` on each master and provide `config.yml` on each. To
-> dedup alerts across the pair, set `suppression.store: redis` and point every master's
-> `suppression.redis_url` at one shared Redis.
+> **HA / multiple masters:** run the installer on each master; set `suppression.store: redis` in each
+> `config.yml`, pointing at one shared Redis, so the pair dedups.
 
 ---
 
-## 5. Enable the Icinga API + the scoped `ntfy-relay` ApiUser
-
-The Ack/Downtime buttons reach Icinga through `relay.py`, which calls the **local** Icinga API as a
-**scoped** ApiUser limited to acknowledge + downtime. Define it in a file readable only by icinga
-(`0640 nagios`):
-
-```icinga
-object ApiUser "ntfy-relay" {
-  password = "CHANGE_ME"   // == relay.icinga_api_password in config.yml
-  permissions = [ "actions/acknowledge-problem", "actions/schedule-downtime" ]
-}
-```
-
-The API feature must be enabled (step 0) and reachable from the master itself (default port 5665).
-
----
-
-## 6. Wire the notification
-
-Route alerts to the dispatcher. Copy the example, set your alert topic and apply rules, install it,
-validate, and reload:
-
-```bash
-#  edit dispatcher/icinga2/ntfy-notifications.conf.example:
-#    - set the User "ntfy-oncall" vars.ntfy_topic to your alert topic (e.g. "alerts")
-#    - adjust the two apply rules to match the hosts/services you want notified
-sudo cp dispatcher/icinga2/ntfy-notifications.conf.example \
-        /etc/icinga2/conf.d/ntfy-notifications.conf
-sudo icinga2 daemon -C && sudo systemctl reload icinga2
-```
-
-(Or create the equivalent User + Notifications in **Icinga Director**.)
-
----
-
-## 7. Run the relay
+## 5. Run the relay
 
 `relay.py` subscribes outbound to the ack topic and applies the button actions. Run it as a systemd
 service:
@@ -194,7 +153,7 @@ journalctl -u ntfy-icinga-relay -f        # watch it subscribe
 
 ---
 
-## 8. Subscribe a phone and test
+## 6. Subscribe a phone and test
 
 1. Install the **ntfy** app, add server `https://push.example.com`, log in as your read user
    (step 3), and subscribe to the **alert topic** (e.g. `alerts`).
