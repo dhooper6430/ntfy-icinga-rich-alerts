@@ -48,6 +48,31 @@ The full walkthrough — ntfy + Apache setup, creating tokens, testing, and trou
 **[docs/install.md](docs/install.md)**; the data flow is in
 **[docs/architecture.md](docs/architecture.md)**.
 
+## Set up your phone
+
+Everyone who should get alerts installs the **ntfy** app and subscribes to your alert topic. The
+topics are private (`auth-default-access: deny-all`), so first give each person a **read login** on
+the server (run on the ntfy host):
+
+```bash
+sudo ntfy user add alice && sudo ntfy access alice alerts read   # one per person; 'alerts' = your topic
+```
+
+Then on the phone:
+
+1. Install **ntfy** — [App Store](https://apps.apple.com/app/ntfy/id1625396347),
+   [Google Play](https://play.google.com/store/apps/details?id=io.heckel.ntfy), or
+   [F-Droid](https://f-droid.org/packages/io.heckel.ntfy/).
+2. **Settings → Manage users → Add user:** server `https://push.example.com`, with the username and
+   password you created above.
+3. Tap **＋** to subscribe → topic name `alerts`, turn on **Use another server** and enter
+   `https://push.example.com`, then **Subscribe**.
+
+That's it — alerts now land on the lock screen with the graph and the **Acknowledge / Downtime**
+buttons. iOS push works automatically (your server relays a wake-up through ntfy.sh's APNs and the
+phone fetches the message from *your* server). On Android, if alerts arrive late, turn on **instant
+delivery** for the subscription and exclude ntfy from battery optimisation.
+
 ## Configuration
 
 `install.sh` generates `config.yml` from your answers (re-run it to change them, or edit the file).
