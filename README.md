@@ -33,7 +33,7 @@ Native, no containers, on a single Debian/Ubuntu Icinga 2 host.
    sudo apt install -y git python3-venv
    git clone https://github.com/dhooper6430/ntfy-icinga-rich-alerts.git
    cd ntfy-icinga-rich-alerts
-   sudo dispatcher/install.sh
+   sudo ./install.sh
    ```
 
 3. **Start the relay and subscribe a phone:**

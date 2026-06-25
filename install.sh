@@ -22,18 +22,19 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/ntfy-icinga}"
 CONFD="${CONFD:-/etc/icinga2/conf.d}"
 ICINGA_USER="${ICINGA_USER:-nagios}"
 PYTHON="${PYTHON:-python3}"
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # repo root (this script lives here)
+D="${SRC}/dispatcher"                                  # dispatcher source dir
 CONFIG="${INSTALL_DIR}/dispatcher/config.yml"
 
 echo ">>> Installing ntfy dispatcher to ${INSTALL_DIR} on $(hostname -s)"
 
 # 1. Code (never clobber an existing config.yml — we copy code + the example, not secrets).
 mkdir -p "${INSTALL_DIR}/dispatcher" "${INSTALL_DIR}/state" "${INSTALL_DIR}/cache"
-for f in "${SRC}"/*.py "${SRC}/requirements.txt"; do
+for f in "${D}"/*.py "${D}/requirements.txt"; do
   [ -e "$f" ] && cp -a "$f" "${INSTALL_DIR}/dispatcher/"
 done
-cp -a "${SRC}/icinga2" "${INSTALL_DIR}/dispatcher/"
-cp -a "${SRC}/config.example.yml" "${INSTALL_DIR}/dispatcher/config.example.yml"
+cp -a "${D}/icinga2" "${INSTALL_DIR}/dispatcher/"
+cp -a "${D}/config.example.yml" "${INSTALL_DIR}/dispatcher/config.example.yml"
 
 # 2. venv + dependencies (network-tolerant so pip can't hang forever on a slow PyPI mirror).
 PIP_NET="--timeout 20 --retries 2"
@@ -46,7 +47,7 @@ PIP_NET="--timeout 20 --retries 2"
 
 # 3. NotificationCommands (loaded via the conf.d/*.conf include glob).
 install -m 0640 -o "${ICINGA_USER}" -g "${ICINGA_USER}" \
-  "${SRC}/icinga2/ntfy-commands.conf" "${CONFD}/ntfy-commands.conf"
+  "${D}/icinga2/ntfy-commands.conf" "${CONFD}/ntfy-commands.conf"
 
 # 4. Interactive configuration -------------------------------------------------------------------
 ask() {  # ask VAR "prompt" ["default"]
@@ -62,11 +63,35 @@ if [ "${NONINTERACTIVE:-}" != "1" ] && [ -t 0 ]; then
   case "${do_cfg:-n}" in [yY]*)
     echo ">>> A few questions — your answers become config.yml + the ApiUser + the notification rules:"
     ask NTFY_BASE   "ntfy server URL (your own, or https://ntfy.sh)" "https://push.example.com"
-    ask NTFY_TOKEN  "ntfy WRITE token for the dispatcher (tk_...; blank for public ntfy.sh topics)" ""
-    ask RELAY_TOKEN "ntfy READ token for the relay (tk_...; blank for public ntfy.sh topics)" ""
-    ask WEB_URL     "Icinga Web URL (for the 'Open in Icinga' link)" "https://icinga.example.com/icingaweb2"
     ask ALERT_TOPIC "alert topic (the phone subscribes to this)" "alerts"
     ask ACK_TOPIC   "ack topic (the buttons publish here; the relay subscribes)" "icinga-acks"
+
+    # Tokens: when ntfy is installed locally we create the dispatcher + relay users/tokens for you;
+    # otherwise (or for ntfy.sh) you paste tokens you made yourself (ntfy token add / account page).
+    NTFY_TOKEN=""; RELAY_TOKEN=""
+    if command -v ntfy >/dev/null 2>&1 && [[ "$NTFY_BASE" != *"ntfy.sh"* ]]; then
+      read -r -p "    ntfy is installed here — auto-create the dispatcher + relay users/tokens? [Y/n]: " __mk
+      if [[ -z "${__mk}" || "${__mk}" =~ ^[Yy] ]]; then
+        # dispatcher: WRITE on the alert + ack topics (publishes alerts and the button payloads)
+        NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add dispatcher >/dev/null 2>&1 || true
+        ntfy access dispatcher "$ALERT_TOPIC" write >/dev/null 2>&1 || true
+        ntfy access dispatcher "$ACK_TOPIC"   write >/dev/null 2>&1 || true
+        NTFY_TOKEN="$(ntfy token add dispatcher 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
+        # relay: READ on the ack topic (subscribes to it)
+        NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add relay >/dev/null 2>&1 || true
+        ntfy access relay "$ACK_TOPIC" read >/dev/null 2>&1 || true
+        RELAY_TOKEN="$(ntfy token add relay 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
+        if [ -n "$NTFY_TOKEN" ] && [ -n "$RELAY_TOKEN" ]; then
+          echo "    created ntfy users 'dispatcher' (write on ${ALERT_TOPIC} + ${ACK_TOPIC}) and 'relay' (read on ${ACK_TOPIC}), with tokens."
+        else
+          echo "    could not auto-create tokens (is ntfy set up with an auth file + deny-all?) — enter them manually:"
+        fi
+      fi
+    fi
+    [ -n "$NTFY_TOKEN" ]  || ask NTFY_TOKEN  "ntfy WRITE token for the dispatcher (tk_...; blank for public ntfy.sh topics)" ""
+    [ -n "$RELAY_TOKEN" ] || ask RELAY_TOKEN "ntfy READ token for the relay (tk_...; blank for public ntfy.sh topics)" ""
+
+    ask WEB_URL     "Icinga Web URL (for the 'Open in Icinga' link)" "https://icinga.example.com/icingaweb2"
     ask BACKEND     "graph backend: vm or grafana" "vm"
     if [ "$BACKEND" = "grafana" ]; then
       ask RENDER_URL "Grafana base URL" "http://localhost:3000"
@@ -144,7 +169,7 @@ CONF
     # Notification rules with your topic set. The assign matches every host/service that has
     # enable_notifications (Icinga's default) — narrow it in the generated file if you want less.
     sed "s|vars.ntfy_topic = \"alerts\"|vars.ntfy_topic = \"${ALERT_TOPIC}\"|" \
-      "${SRC}/icinga2/ntfy-notifications.conf.example" > "${CONFD}/ntfy-notifications.conf"
+      "${D}/icinga2/ntfy-notifications.conf.example" > "${CONFD}/ntfy-notifications.conf"
 
     chown "${ICINGA_USER}:${ICINGA_USER}" "$CONFIG" "${CONFD}/ntfy-relay-apiuser.conf" "${CONFD}/ntfy-notifications.conf"
     chmod 0640 "$CONFIG" "${CONFD}/ntfy-relay-apiuser.conf" "${CONFD}/ntfy-notifications.conf"
@@ -173,9 +198,12 @@ fi
 if [ "${CFG_DONE}" = "1" ]; then
   cat <<NEXT
 
-Almost done — two things you do yourself:
+Almost done — a few things you do yourself:
   * Make ntfy reachable at ${NTFY_BASE} (self-hosted ntfy behind Apache — docs/install.md steps 1-2 —
-    or use https://ntfy.sh). Subscribe a phone to topic "${ALERT_TOPIC}".
+    or use https://ntfy.sh).
+  * Create a read login for each on-call person (they sign into the ntfy app with it, then subscribe
+    to "${ALERT_TOPIC}"):
+      sudo ntfy user add alice && sudo ntfy access alice "${ALERT_TOPIC}" read
   * Run the relay:
       sudo cp dispatcher/relay.service.example /etc/systemd/system/ntfy-icinga-relay.service
       sudo systemctl daemon-reload && sudo systemctl enable --now ntfy-icinga-relay

@@ -80,8 +80,13 @@ local ntfy daemon, including the WebSocket live stream).
 ## 3. Create ntfy users and tokens
 
 With `auth-default-access: "deny-all"`, nobody can read or write a topic until you grant it. Pick
-two topic names — an **alert topic** (e.g. `alerts`) and an **ack topic** (e.g. `icinga-acks`) —
-then create:
+two topic names — an **alert topic** (e.g. `alerts`) and an **ack topic** (e.g. `icinga-acks`).
+
+> **On a local self-hosted ntfy you can skip the `dispatcher` and `relay` tokens below** —
+> `./install.sh` (step 4) offers to create those two users + tokens for you. You still create a
+> **read login per on-call person** here.
+
+Otherwise create them by hand (the dispatcher + relay tokens go into `config.yml`):
 
 ```bash
 # 1. A publisher user + write token for the dispatcher (writes BOTH topics) -> config.yml ntfy.token
@@ -107,9 +112,10 @@ user), so per-person topics would dedup each other away.
 
 ## 4. Install and configure the dispatcher
 
-`dispatcher/install.sh`, run **interactively**, installs the dispatcher and then asks a handful of
-questions — your ntfy URL, the alert/ack topics, the dispatcher + relay tokens (from step 3), the
-graph backend + its URL, your Icinga Web URL, and the local Icinga API URL. From your answers it
+`./install.sh`, run **interactively**, installs the dispatcher and then asks a handful of
+questions — your ntfy URL, the alert/ack topics, the graph backend + its URL, your Icinga Web URL,
+and the local Icinga API URL. If ntfy is on this host it offers to **create the `dispatcher` +
+`relay` ntfy users/tokens for you** (otherwise you paste the ones from step 3). From your answers it
 writes **all three** config files and auto-generates the HMAC secret and the ApiUser password:
 
 - `config.yml` — the dispatcher config,
@@ -119,7 +125,7 @@ writes **all three** config files and auto-generates the HMAC secret and the Api
 
 ```bash
 sudo apt install -y python3-venv
-sudo dispatcher/install.sh        # answer the prompts
+sudo ./install.sh        # answer the prompts
 ```
 
 It then validates the Icinga config (`icinga2 daemon -C`) and reloads. Two things to check afterward:
@@ -192,7 +198,7 @@ journalctl -u ntfy-icinga-relay -f        # watch it subscribe
 ## Deploying via CI (optional)
 
 `install.sh` is a single-host installer designed to be run directly **or over ssh** from any CI
-runner — there is nothing vendor-specific in it. A typical pipeline copies the `dispatcher/`
-directory to each master and runs `install.sh` there (e.g. `tar | ssh ... 'bash install.sh'`), once
-per master. Keep secrets (`config.yml`, the ApiUser password) out of CI and provision them
-out-of-band; the installer is intentionally secret-free so CI never has to carry them.
+runner — there is nothing vendor-specific in it. A typical pipeline copies the repo (`install.sh` +
+`dispatcher/`) to each master and runs `NONINTERACTIVE=1 ./install.sh` there (which installs the
+code only, skipping the questions), once per master. In that mode you provide `config.yml` yourself
+(out-of-band) — the installer is intentionally secret-free, so CI never has to carry your secrets.
