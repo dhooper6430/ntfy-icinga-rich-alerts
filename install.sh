@@ -70,21 +70,28 @@ if [ "${NONINTERACTIVE:-}" != "1" ] && [ -t 0 ]; then
     # otherwise (or for ntfy.sh) you paste tokens you made yourself (ntfy token add / account page).
     NTFY_TOKEN=""; RELAY_TOKEN=""
     if command -v ntfy >/dev/null 2>&1 && [[ "$NTFY_BASE" != *"ntfy.sh"* ]]; then
-      read -r -p "    ntfy is installed here — auto-create the dispatcher + relay users/tokens? [Y/n]: " __mk
-      if [[ -z "${__mk}" || "${__mk}" =~ ^[Yy] ]]; then
-        # dispatcher: WRITE on the alert + ack topics (publishes alerts and the button payloads)
-        NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add dispatcher >/dev/null 2>&1 || true
-        ntfy access dispatcher "$ALERT_TOPIC" write >/dev/null 2>&1 || true
-        ntfy access dispatcher "$ACK_TOPIC"   write >/dev/null 2>&1 || true
-        NTFY_TOKEN="$(ntfy token add dispatcher 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
-        # relay: READ on the ack topic (subscribes to it)
-        NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add relay >/dev/null 2>&1 || true
-        ntfy access relay "$ACK_TOPIC" read >/dev/null 2>&1 || true
-        RELAY_TOKEN="$(ntfy token add relay 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
-        if [ -n "$NTFY_TOKEN" ] && [ -n "$RELAY_TOKEN" ]; then
-          echo "    created ntfy users 'dispatcher' (write on ${ALERT_TOPIC} + ${ACK_TOPIC}) and 'relay' (read on ${ACK_TOPIC}), with tokens."
-        else
-          echo "    could not auto-create tokens (is ntfy set up with an auth file + deny-all?) — enter them manually:"
+      if ! ntfy user list >/dev/null 2>&1; then
+        echo "    NOTE: ntfy is installed but its auth isn't configured, so tokens can't be created."
+        echo "          Set  auth-file: \"/var/lib/ntfy/user.db\"  and  auth-default-access: \"deny-all\""
+        echo "          in /etc/ntfy/server.yml, restart ntfy (docs/install.md step 1), then re-run this."
+        echo "          For now, paste tokens you create yourself:"
+      else
+        read -r -p "    ntfy is installed here — auto-create the dispatcher + relay users/tokens? [Y/n]: " __mk
+        if [[ -z "${__mk}" || "${__mk}" =~ ^[Yy] ]]; then
+          # dispatcher: WRITE on the alert + ack topics (publishes alerts and the button payloads)
+          NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add dispatcher >/dev/null 2>&1 || true
+          ntfy access dispatcher "$ALERT_TOPIC" write >/dev/null 2>&1 || true
+          ntfy access dispatcher "$ACK_TOPIC"   write >/dev/null 2>&1 || true
+          NTFY_TOKEN="$(ntfy token add dispatcher 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
+          # relay: READ on the ack topic (subscribes to it)
+          NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add relay >/dev/null 2>&1 || true
+          ntfy access relay "$ACK_TOPIC" read >/dev/null 2>&1 || true
+          RELAY_TOKEN="$(ntfy token add relay 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
+          if [ -n "$NTFY_TOKEN" ] && [ -n "$RELAY_TOKEN" ]; then
+            echo "    created ntfy users 'dispatcher' (write on ${ALERT_TOPIC} + ${ACK_TOPIC}) and 'relay' (read on ${ACK_TOPIC}), with tokens."
+          else
+            echo "    could not auto-create tokens — enter them manually:"
+          fi
         fi
       fi
     fi
