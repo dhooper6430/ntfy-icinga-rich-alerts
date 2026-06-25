@@ -86,17 +86,22 @@ server or point at a public one:
 | **Simplest** | public **ntfy.sh** | dispatcher + `relay.py` | **nothing** (all outbound) | alert *contents* transit ntfy.sh (not E2E-encrypted) |
 | **Own your data** | **self-hosted** (`server/`) | dispatcher + `server/` stack | the ntfy server, via **Caddy** or a **tunnel** | you host and expose ntfy |
 
-- **Simplest (ntfy.sh + relay):** set `actions.transport: relay` and `ntfy.attachment_via: upload`,
-  point `ntfy.base_url` at `https://ntfy.sh`, and run `dispatcher/relay.py`. No `server/` stack, no
-  broker, no Caddy, no open ports — your Icinga box only makes outbound connections.
+- **Simplest (ntfy.sh + relay):** no Docker, no `server/` stack, no broker, no Caddy, no open ports —
+  just the dispatcher + `dispatcher/relay.py` running native on your Icinga host, all outbound.
+  Follow the **[ntfy.sh quick start →](docs/quickstart-ntfy-sh.md)**.
 - **Own your data (self-hosted ntfy):** run the `server/` stack with **Caddy** (auto-HTTPS) or a
   **tunnel** in front so phones can reach your ntfy. Acks can ride the broker (default) or the relay.
 
 **Caddy is only ever needed for the self-hosted path** — it terminates TLS for *your* ntfy server;
-the Acknowledge/Downtime buttons never require it. The rest of this README shows the self-hosted
-path; for the zero-infrastructure path see [`docs/reachability.md`](docs/reachability.md).
+the Acknowledge/Downtime buttons never require it. For the zero-infrastructure path, follow the
+**[ntfy.sh quick start](docs/quickstart-ntfy-sh.md)**; the Quick start below covers the self-hosted
+(Docker) path.
 
-## Quick start
+## Quick start (self-hosted)
+
+> **Want the easiest path instead?** Use **ntfy.sh + the relay** — no Docker, nothing exposed, just
+> two native Python pieces on your Icinga host: **[docs/quickstart-ntfy-sh.md](docs/quickstart-ntfy-sh.md)**.
+> The steps below are the self-hosted (Docker) path.
 
 1. **Stand up the server stack** (ntfy + broker) on a Docker host:
    ```bash
