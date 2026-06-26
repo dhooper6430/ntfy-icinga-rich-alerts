@@ -262,6 +262,13 @@ chmod +x "${INSTALL_DIR}/dispatcher/notify.py"
 # 5b. Sanity-check the secrets are all present + working (catches a blanked/mismatched config.yml).
 verify_tokens
 
+# 5c. If we just rewrote config.yml and the relay is already running, restart it so it loads the new
+#     tokens/URL — `systemctl enable --now` does NOT restart an already-active service.
+if [ "${CFG_DONE}" = "1" ] && systemctl is-active --quiet ntfy-icinga-relay 2>/dev/null; then
+  echo ">>> restarting ntfy-icinga-relay to load the new config..."
+  systemctl restart ntfy-icinga-relay || echo "    (restart failed — run: sudo systemctl restart ntfy-icinga-relay)"
+fi
+
 # 6. Validate, then reload (never restart — a reload won't drop active checks).
 if icinga2 daemon -C >/dev/null 2>&1; then
   if [ "${NO_RELOAD:-}" = "1" ]; then
