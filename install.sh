@@ -56,6 +56,52 @@ ask() {  # ask VAR "prompt" ["default"]
   else read -r -p "    ${__p}: " __a; fi
   printf -v "$__v" '%s' "$__a"
 }
+
+yaml_val() {  # yaml_val KEY FILE -> scalar value of a "  KEY: ..." line (quotes/comment stripped), else empty
+  [ -f "${2:-}" ] || return 0
+  sed -nE "s/^[[:space:]]*$1:[[:space:]]*\"?([^\"#]*)\"?.*\$/\1/p" "$2" | head -1
+}
+
+verify_tokens() {  # sanity-check the secrets in config.yml — structural, then live against ntfy
+  [ -f "$CONFIG" ] || return 0
+  local base ktopic dtok wtok rtok sec cpw apw ok=1
+  base="$(yaml_val base_url "$CONFIG")"
+  ktopic="$(yaml_val ack_topic "$CONFIG")"
+  dtok="$(yaml_val token "$CONFIG")"
+  wtok="$(yaml_val ack_write_token "$CONFIG")"
+  rtok="$(yaml_val ack_read_token "$CONFIG")"
+  sec="$(yaml_val shared_secret "$CONFIG")"
+  echo ">>> Verifying secrets in ${CONFIG} ..."
+  [ -n "$dtok" ] || { echo "    MISSING ntfy.token (dispatcher write) — alerts won't publish"; ok=0; }
+  [ -n "$wtok" ] || { echo "    MISSING actions.ack_write_token"; ok=0; }
+  [ -n "$rtok" ] || { echo "    MISSING relay.ack_read_token — the relay can't subscribe"; ok=0; }
+  [ -n "$sec" ]  || { echo "    MISSING actions.shared_secret — the buttons won't verify"; ok=0; }
+  # The Icinga ApiUser password must match between config.yml and the apiuser.conf, or ack/downtime 401s.
+  cpw="$(yaml_val icinga_api_password "$CONFIG")"
+  apw="$(sed -nE 's/^[[:space:]]*password = "([^"]*)".*/\1/p' "${CONFD}/ntfy-relay-apiuser.conf" 2>/dev/null | head -1)"
+  if [ -z "$cpw" ] || [ "$cpw" != "$apw" ]; then
+    echo "    MISMATCH Icinga ApiUser password differs between config.yml and ntfy-relay-apiuser.conf"; ok=0
+  fi
+  # Live: do the tokens actually work? (only if curl exists and ntfy answers its health check)
+  if command -v curl >/dev/null 2>&1 && [ -n "$base" ] \
+     && curl -fsS -o /dev/null --max-time 5 "${base%/}/v1/health" 2>/dev/null; then
+    local rhdr=() dhdr=() rc="" wc=""
+    [ -n "$rtok" ] && rhdr=(-H "Authorization: Bearer $rtok")
+    [ -n "$dtok" ] && dhdr=(-H "Authorization: Bearer $dtok")
+    rc="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${rhdr[@]}" "${base%/}/${ktopic}/json?poll=1" || true)"
+    [ "$rc" = 200 ] && echo "    OK   relay token can read ${ktopic}" \
+                    || { echo "    FAIL relay read token: HTTP ${rc:-?} on ${ktopic} (needs read access)"; ok=0; }
+    # A non-JSON marker to the ACK topic: the relay ignores it and no phone subscribes there.
+    wc="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${dhdr[@]}" \
+          -d 'ntfy-icinga install token check (ignore)' "${base%/}/${ktopic}" || true)"
+    [ "$wc" = 200 ] && echo "    OK   dispatcher token can publish (tested on ${ktopic})" \
+                    || { echo "    FAIL dispatcher write token: HTTP ${wc:-?} (needs write access)"; ok=0; }
+  else
+    echo "    (ntfy at ${base:-?} not reachable here — structural check only, skipped the live token test)"
+  fi
+  [ "$ok" = 1 ] && echo ">>> Secrets OK." \
+                || echo ">>> WARNING: problems above — fix before relying on alerts (docs/install.md step 3)."
+}
 CFG_DONE=
 if [ "${NONINTERACTIVE:-}" != "1" ] && [ -t 0 ]; then
   do_cfg=y
@@ -66,32 +112,40 @@ if [ "${NONINTERACTIVE:-}" != "1" ] && [ -t 0 ]; then
     ask ALERT_TOPIC "alert topic (the phone subscribes to this)" "alerts"
     ask ACK_TOPIC   "ack topic (the buttons publish here; the relay subscribes)" "icinga-acks"
 
-    # Tokens: when ntfy is installed locally we create the dispatcher + relay users/tokens for you;
-    # otherwise (or for ntfy.sh) you paste tokens you made yourself (ntfy token add / account page).
-    NTFY_TOKEN=""; RELAY_TOKEN=""
-    if command -v ntfy >/dev/null 2>&1 && [[ "$NTFY_BASE" != *"ntfy.sh"* ]]; then
+    # Tokens: REUSE any already in config.yml so a reconfigure never blanks them; otherwise, when
+    # ntfy is installed locally, create the *missing* dispatcher/relay users + tokens; otherwise
+    # paste tokens you made yourself (ntfy token add / the ntfy.sh account page).
+    NTFY_TOKEN="$(yaml_val token "$CONFIG")"
+    RELAY_TOKEN="$(yaml_val ack_read_token "$CONFIG")"
+    if [ -n "$NTFY_TOKEN" ] || [ -n "$RELAY_TOKEN" ]; then
+      echo "    reusing the ntfy token(s) already in ${CONFIG} (clear them there first if you want fresh ones)."
+    fi
+    if { [ -z "$NTFY_TOKEN" ] || [ -z "$RELAY_TOKEN" ]; } \
+       && command -v ntfy >/dev/null 2>&1 && [[ "$NTFY_BASE" != *"ntfy.sh"* ]]; then
       if ! ntfy user list >/dev/null 2>&1; then
         echo "    NOTE: ntfy is installed but its auth isn't configured, so tokens can't be created."
         echo "          Set  auth-file: \"/var/lib/ntfy/user.db\"  and  auth-default-access: \"deny-all\""
         echo "          in /etc/ntfy/server.yml, restart ntfy (docs/install.md step 1), then re-run this."
         echo "          For now, paste tokens you create yourself:"
       else
-        read -r -p "    ntfy is installed here — auto-create the dispatcher + relay users/tokens? [Y/n]: " __mk
+        read -r -p "    create the missing dispatcher/relay ntfy users + tokens? [Y/n]: " __mk
         if [[ -z "${__mk}" || "${__mk}" =~ ^[Yy] ]]; then
-          # dispatcher: WRITE on the alert + ack topics (publishes alerts and the button payloads)
-          NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add dispatcher >/dev/null 2>&1 || true
-          ntfy access dispatcher "$ALERT_TOPIC" write >/dev/null 2>&1 || true
-          ntfy access dispatcher "$ACK_TOPIC"   write >/dev/null 2>&1 || true
-          NTFY_TOKEN="$(ntfy token add dispatcher 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
-          # relay: READ on the ack topic (subscribes to it)
-          NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add relay >/dev/null 2>&1 || true
-          ntfy access relay "$ACK_TOPIC" read >/dev/null 2>&1 || true
-          RELAY_TOKEN="$(ntfy token add relay 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
-          if [ -n "$NTFY_TOKEN" ] && [ -n "$RELAY_TOKEN" ]; then
-            echo "    created ntfy users 'dispatcher' (write on ${ALERT_TOPIC} + ${ACK_TOPIC}) and 'relay' (read on ${ACK_TOPIC}), with tokens."
-          else
-            echo "    could not auto-create tokens — enter them manually:"
+          if [ -z "$NTFY_TOKEN" ]; then
+            # dispatcher: WRITE on the alert + ack topics (publishes alerts and the button payloads)
+            NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add dispatcher >/dev/null 2>&1 || true
+            ntfy access dispatcher "$ALERT_TOPIC" write >/dev/null 2>&1 || true
+            ntfy access dispatcher "$ACK_TOPIC"   write >/dev/null 2>&1 || true
+            NTFY_TOKEN="$(ntfy token add dispatcher 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
           fi
+          if [ -z "$RELAY_TOKEN" ]; then
+            # relay: READ on the ack topic (subscribes to it)
+            NTFY_PASSWORD="$(openssl rand -hex 16)" ntfy user add relay >/dev/null 2>&1 || true
+            ntfy access relay "$ACK_TOPIC" read >/dev/null 2>&1 || true
+            RELAY_TOKEN="$(ntfy token add relay 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1 || true)"
+          fi
+          [ -n "$NTFY_TOKEN" ] && [ -n "$RELAY_TOKEN" ] \
+            && echo "    ntfy tokens ready (dispatcher writes ${ALERT_TOPIC}+${ACK_TOPIC}; relay reads ${ACK_TOPIC})." \
+            || echo "    could not auto-create tokens — enter them manually:"
         fi
       fi
     fi
@@ -204,6 +258,9 @@ fi
 # 5. Ownership + permissions on the install tree.
 chown -R "${ICINGA_USER}:${ICINGA_USER}" "${INSTALL_DIR}"
 chmod +x "${INSTALL_DIR}/dispatcher/notify.py"
+
+# 5b. Sanity-check the secrets are all present + working (catches a blanked/mismatched config.yml).
+verify_tokens
 
 # 6. Validate, then reload (never restart — a reload won't drop active checks).
 if icinga2 daemon -C >/dev/null 2>&1; then
