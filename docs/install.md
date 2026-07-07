@@ -147,8 +147,9 @@ It then validates the Icinga config (`icinga2 daemon -C`) and reloads. Two thing
 
 ## 5. Run the relay
 
-`relay.py` subscribes outbound to the ack topic and applies the button actions. Run it as a systemd
-service:
+`relay.py` subscribes outbound to the ack topic and applies the button actions. It remembers the
+last message it processed (`relay.state_file`) and resumes from there on restart, so an action
+tapped while the relay was down is applied once it's back. Run it as a systemd service:
 
 ```bash
 sudo cp dispatcher/relay.service.example /etc/systemd/system/ntfy-icinga-relay.service
@@ -192,7 +193,13 @@ journalctl -u ntfy-icinga-relay -f        # watch it subscribe
   (`systemctl status ntfy-icinga-relay`), that it can subscribe to the ack topic (correct
   `ntfy.base_url`, `actions.ack_topic`, and `relay.ack_read_token`), and that the `ntfy-relay`
   ApiUser can reach the local Icinga API (`relay.icinga_api_*`). "Already acknowledged / already in
-  downtime" is reported as success.
+  downtime" is reported as success. In `journalctl -u ntfy-icinga-relay`:
+  `REJECTED ... bad or expired token` means the button's signed token didn't verify — the token is
+  older than `actions.token_ttl` (default 24h), the notification predates an upgrade that changed
+  the token format, or `actions.shared_secret` differs between the dispatcher and relay configs
+  (they must share one `config.yml`). `REJECTED by Icinga: http=401` means the ApiUser password in
+  `config.yml` doesn't match `ntfy-relay-apiuser.conf` — re-run `install.sh`, which verifies the
+  pair.
 - **No iOS push** — `base-url` must be `https` and `upstream-base-url: "https://ntfy.sh"` must be
   set in `/etc/ntfy/server.yml`; confirm Apache is serving valid TLS for `push.example.com`.
 
