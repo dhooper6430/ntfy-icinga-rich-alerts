@@ -1,0 +1,55 @@
+/*
+ * ntfy notification apply rules (example).
+ *
+ * Copy into your icinga2 conf.d (e.g. /etc/icinga2/conf.d/ntfy-notifications.conf) and adapt,
+ * OR create the equivalent User + Notifications in Icinga Director.
+ *
+ * Every notification goes to ONE shared topic, "alerts" (User "ntfy-oncall"). Each on-call
+ * person has their own ntfy login with READ access to that topic and subscribes to it. The
+ * dispatcher publishes with a token that has write on the topic (config.yml ntfy.token).
+ * A single shared topic is REQUIRED: suppression is keyed per host!service (not per user), so
+ * per-person topics would dedup each other away (only the first recipient processed gets each
+ * alert). The Ack/Downtime buttons work for anyone who receives the notification (relay.py
+ * validates an HMAC token, not the user).
+ */
+
+object User "ntfy-oncall" {
+  display_name = "On-call (ntfy)"
+  vars.ntfy_topic = "alerts"
+}
+
+apply Notification "ntfy-host-notification" to Host {
+  command = "ntfy-host-notification"
+  users = [ "ntfy-oncall" ]
+  // period = "24x7"   // optional: a TimePeriod you've defined. Omitted -> notify at any time.
+                       // (Don't reference "24x7" unless it exists on your install — e.g. from the
+                       //  default conf.d/timeperiods.conf — or validation fails.)
+  states = [ Down, Up ]
+  types = [ Acknowledgement, Custom, DowntimeEnd, DowntimeRemoved, DowntimeStart, Problem, Recovery ]
+  assign where host.name && host.enable_notifications
+}
+
+apply Notification "ntfy-service-notification" to Service {
+  command = "ntfy-service-notification"
+  users = [ "ntfy-oncall" ]
+  // period = "24x7"   // optional: a TimePeriod you've defined. Omitted -> notify at any time.
+                       // (Don't reference "24x7" unless it exists on your install — e.g. from the
+                       //  default conf.d/timeperiods.conf — or validation fails.)
+  states = [ Critical, OK, Warning ]
+  types = [ Acknowledgement, DowntimeEnd, DowntimeRemoved, DowntimeStart, Problem, Recovery ]
+  assign where service.name && host.enable_notifications
+}
+
+/*
+ * Scoped Icinga2 API user for the Ack/Downtime action buttons. dispatcher/relay.py calls the
+ * LOCAL Icinga API as this user; its password is config.yml relay.icinga_api_password. Keep this
+ * in a file readable only by icinga (0640 nagios) — it carries a secret.
+ *
+ * object ApiUser "ntfy-relay" {
+ *   password = "CHANGE_ME"   // == relay.icinga_api_password in config.yml
+ *   permissions = [ "actions/acknowledge-problem", "actions/schedule-downtime" ]
+ * }
+ *
+ * The Icinga API must be enabled (`icinga2 feature enable api`) and reachable from the relay on
+ * the master (default port 5665). See docs/install.md.
+ */

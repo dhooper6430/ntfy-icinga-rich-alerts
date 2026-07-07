@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Real secrets / filled-in config — only the *.example.* templates are tracked
+*.env
+!*.env.example
+config.yml
+server.yml
+dispatcher/config.yml
+server/server.yml
+server/.env
+
+# Runtime data + rendered graphs
+cache/
+data/
+*.db
+
+# OS / editor cruft
+.DS_Store
+*.swp

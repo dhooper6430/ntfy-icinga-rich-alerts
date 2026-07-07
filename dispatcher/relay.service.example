@@ -1,0 +1,28 @@
+# systemd unit for the ntfy-icinga ack relay (subscribes to the ntfy ack topic, applies actions).
+#
+# Install:
+#   sudo cp relay.service.example /etc/systemd/system/ntfy-icinga-relay.service
+#   # adjust User + the /opt/ntfy-icinga paths below to match your install (see install.sh INSTALL_DIR)
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ntfy-icinga-relay
+#   journalctl -u ntfy-icinga-relay -f        # watch it
+[Unit]
+Description=ntfy-icinga ack relay (subscribes to the ntfy ack topic and calls the Icinga API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nagios
+WorkingDirectory=/opt/ntfy-icinga/dispatcher
+Environment=DISPATCHER_CONFIG=/opt/ntfy-icinga/dispatcher/config.yml
+ExecStart=/opt/ntfy-icinga/venv/bin/python3 /opt/ntfy-icinga/dispatcher/relay.py
+Restart=always
+RestartSec=5
+# Light hardening (the relay only needs outbound network + read access to config.yml).
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

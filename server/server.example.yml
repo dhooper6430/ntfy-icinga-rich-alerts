@@ -1,0 +1,50 @@
+# ntfy self-hosted server config (NATIVE install — apt install ntfy, no containers).
+# Docs: https://docs.ntfy.sh/config/
+#
+# Install ntfy from the official apt repo (https://docs.ntfy.sh/install/#debianubuntu), copy this
+# file to /etc/ntfy/server.yml, adjust the values below, then `systemctl enable --now ntfy`.
+# TLS is terminated by Apache in front of ntfy (see apache.example.conf); ntfy itself listens on
+# plain HTTP bound to localhost.
+
+# Public base URL phones connect to (TLS terminated by Apache upstream). MUST be https for iOS push.
+base-url: "https://push.example.com"
+
+# Listen on localhost only — Apache reverse-proxies to this address (see apache.example.conf).
+listen-http: "127.0.0.1:2586"
+
+# Tell ntfy it sits behind a reverse proxy so it trusts X-Forwarded-* headers (rate-limit by the
+# real client IP, build correct links, etc.). Apache sets X-Forwarded-Proto "https".
+behind-proxy: true
+
+# iOS instant push: the public ntfy.sh upstream relays only a wake-up (a SHA256 of the topic) via
+# Apple APNs; the phone then fetches the real message + attachment from THIS server. Required for
+# iOS push to a self-hosted server. Remove this line if you only use Android / the web app.
+upstream-base-url: "https://ntfy.sh"
+
+# --- Auth -------------------------------------------------------------------------------------
+# Per-user auth + ACLs. Default-deny: nobody can read/write any topic until explicitly granted.
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+enable-signup: false
+enable-login: true
+#
+# With auth-default-access "deny-all" you create users/tokens and grant per-topic access with the
+# ntfy CLI on this host (see docs/install.md step 3):
+#   ntfy user add <name>                       # interactive, creates a login
+#   ntfy access <name> <topic> <read|write|rw> # grant that user access to a topic
+#   ntfy token add <name>                      # mint a token (tk_...) for that user (dispatcher/relay)
+# Typically: a write token on the alert + ack topics for the dispatcher, a read login per person,
+# and a read token on the ack topic for relay.py.
+
+# --- Attachments (lock-screen graph thumbnails) -----------------------------------------------
+# The dispatcher's "upload" path PUTs the graph PNG into this cache; the phone fetches it from here.
+attachment-cache-dir: "/var/lib/ntfy/attachments"
+attachment-total-size-limit: "5G"
+attachment-file-size-limit: "15M"
+attachment-expiry-duration: "3h"
+
+# Short server-side message history.
+cache-file: "/var/lib/ntfy/cache.db"
+cache-duration: "12h"
+
+log-level: "info"
